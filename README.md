@@ -20,13 +20,13 @@ C# WinForms 기반의 팩맨 게임 프로젝트입니다.
 - 유지보수와 확장성에 유리한 구조 설계
 
 프로젝트 구조
-PacmanSolution.sln
-├─ PacmanGame (WinForms 클라이언트)
-│ ├─ Form1.cs
-│ ├─ Ghost.cs
-│ └─ GameLogic.cs
-│
-└─ PacmanServer (서버 로직)
-├─ Server.cs
-├─ GameRoom.cs
-└─ Program.cs
+PacmanSolution.sln  
+├─ PacmanGame (WinForms 클라이언트)  
+│  ├─ Form1.cs  
+│  ├─ Ghost.cs  
+│  ├─ GameLogic.cs  
+│  
+└─ PacmanServer (서버 로직)  
+   ├─ Server.cs  
+   ├─ GameRoom.cs  
+   └─ Program.cs  
