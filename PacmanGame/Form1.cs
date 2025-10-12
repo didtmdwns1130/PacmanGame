@@ -10,6 +10,7 @@ using System.Windows.Forms;
 
 namespace PacmanGame
 {
+
     public partial class Form1 : Form
     {
         bool goup, godown, goleft, goright;
@@ -19,12 +20,15 @@ namespace PacmanGame
         int speed = 12;
         int score = 0;
 
+        private readonly GameClient _client = new GameClient(); // 서버 호출 추가
+
+
         // 👇 여기에 추가
         Panel gameOverPanel;
         Label gameOverLabel;
         Button btnRetry, btnExit;
 
-        // ← 여기에 한 줄 추가
+        // 여기에 한 줄 추가
         FlowLayoutPanel panelButtons;
 
         // Form1 클래스 필드들 위쪽에 추가
@@ -247,6 +251,11 @@ namespace PacmanGame
 
         private void Form1_Load(object sender, EventArgs e)
         {
+            this.Shown += async (_, __) =>
+            {
+                await _client.ConnectAsync("127.0.0.1", 7777);
+                this.Text = "PacmanClient - Connected";
+            };
 
         }
 

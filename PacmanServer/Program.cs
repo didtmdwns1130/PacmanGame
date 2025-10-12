@@ -1,4 +1,5 @@
 ﻿using System;
+using Shared;   // 추가 (Messages.cs 안 클래스들을 쓰기 위함)
 
 namespace PacmanServer
 {

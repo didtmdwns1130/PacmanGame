@@ -3,6 +3,8 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
+using Shared;   // 추가 (Messages.cs 안 클래스들을 쓰기 위함)
+
 
 namespace PacmanServer
 {
