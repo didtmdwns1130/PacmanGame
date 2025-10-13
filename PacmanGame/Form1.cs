@@ -605,9 +605,30 @@ namespace PacmanGame
             // if (pacman.Left + pacman.Width > this.ClientSize.Width) pacman.Left = -10;
             // if (pacman.Top < -30)                       pacman.Top = this.ClientSize.Height - pacman.Height;
             // if (pacman.Top + pacman.Height > this.ClientSize.Height) pacman.Top = -10;
+
+            ScreenWrap();   // ✅ 이 한 줄 추가
         }
 
 
+        // 화면 밖으로 나가면 반대편에서 나오게 하는 전역 래핑
+        private void ScreenWrap()
+        {
+            var canvas = pacman.Parent ?? this;
+            int W = canvas.ClientSize.Width;
+            int H = canvas.ClientSize.Height;
+
+            // 수평 래핑
+            if (pacman.Right < 0)
+                pacman.Left = W - 1;
+            else if (pacman.Left > W)
+                pacman.Left = -pacman.Width + 1;
+
+            // 수직 래핑이 필요하면 켜고, 아니면 아래 두 줄은 지워도 됨
+            if (pacman.Bottom < 0)
+                pacman.Top = H - 1;
+            else if (pacman.Top > H)
+                pacman.Top = -pacman.Height + 1;
+        }
 
 
 
