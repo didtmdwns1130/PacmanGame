@@ -8,6 +8,8 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Shared;           // MoveDir, Snapshot
+using System.Diagnostics;
+using SMoveDir = Shared.MoveDir;
 
 
 namespace PacmanGame
@@ -23,6 +25,13 @@ namespace PacmanGame
         int score = 0;
 
         private GameClient _client; // 서버 호출 추가
+        private bool _isAlive = true;   // ← 여기 추가
+
+        // 서버 완성 전 임시로 클라 판정 사용
+        private readonly bool _serverAuthoritative = false;
+        private Snapshot _lastSnapshot;
+
+
 
 
         // 👇 여기에 추가
@@ -49,23 +58,32 @@ namespace PacmanGame
         List<Point> ghostStartPositions = new List<Point>();
 
 
-        private MoveDir GetPacDir()
+        private SMoveDir GetPacDir()
         {
-            if (goleft) return MoveDir.Left;
-            if (goright) return MoveDir.Right;
-            if (goup) return MoveDir.Up;
-            if (godown) return MoveDir.Down;
-            return MoveDir.None;
+            if (goleft) return SMoveDir.Left;
+            if (goright) return SMoveDir.Right;
+            if (goup) return SMoveDir.Up;
+            if (godown) return SMoveDir.Down;
+            return SMoveDir.None;
         }
+
 
 
         public Form1()
         {
             InitializeComponent();
 
+            // 추가
+            this.Shown += (_, __) =>
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"PACMAN_START={pacman.Location.X},{pacman.Location.Y}"
+                );
+            };
+
             pacmanStart = pacman.Location;   // 팩맨 시작 위치 저장
             PrepareCenterPopup();            // 중앙 팝업 준비
-            PrepareGameOverUI();             // 👈 이 줄 추가
+            PrepareGameOverUI();             // 추가
 
 
             SetUp();                         // 벽/코인 수집 (한 번만)
@@ -277,20 +295,21 @@ namespace PacmanGame
 
             if (this.InvokeRequired)
             {
-                this.BeginInvoke((Action)(() => ApplySnapshot(snap)));
+                this.BeginInvoke(new Action(() => OnSnapshot(snap)));
+                return;
             }
-            else
-            {
-                ApplySnapshot(snap);
-            }
+
+            // ★ 저장만 해두고, 좌표는 GameTimerEvent에서 필요시 쓸 것
+            _lastSnapshot = snap;
+
+            // 🔕 서버 좌표 즉시 적용 잠시 중단 (클라 물리 복구 상태)
+            // pacman.Location = new Point(snap.X, snap.Y);
+
+            _isAlive = snap.IsAlive;
         }
 
-        private void ApplySnapshot(Shared.Snapshot snap)
-        {
-            // pacman은 PictureBox 이름이라고 가정
-            pacman.Left = snap.X;
-            pacman.Top = snap.Y;
-        }
+
+
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
@@ -348,42 +367,61 @@ namespace PacmanGame
                 noright = nodown = noup = false;
                 goleft = true;
                 pacman.Image = Properties.Resources.pacman_left;
-                _client?.SetCurrentDir(Shared.MoveDir.Left);
+                _client?.SetCurrentDir(SMoveDir.Left);
             }
-            if (e.KeyCode == Keys.Right && !noright)
+            else if (e.KeyCode == Keys.Right && !noright)
             {
                 goleft = goup = godown = false;
                 noleft = noup = nodown = false;
                 goright = true;
                 pacman.Image = Properties.Resources.pacman_right;
-                _client?.SetCurrentDir(Shared.MoveDir.Right);
+                _client?.SetCurrentDir(SMoveDir.Right);
             }
-            if (e.KeyCode == Keys.Up && !noup)
+            else if (e.KeyCode == Keys.Up && !noup)
             {
                 goleft = goright = godown = false;
                 noleft = noright = nodown = false;
                 goup = true;
                 pacman.Image = Properties.Resources.pacman_up;
-                _client?.SetCurrentDir(Shared.MoveDir.Up);
+                _client?.SetCurrentDir(SMoveDir.Up);
             }
-            if (e.KeyCode == Keys.Down && !nodown)
+            else if (e.KeyCode == Keys.Down && !nodown)
             {
                 goleft = goright = goup = false;
                 noleft = noright = noup = false;
                 godown = true;
                 pacman.Image = Properties.Resources.pacman_down;
-                _client?.SetCurrentDir(Shared.MoveDir.Down);
+                _client?.SetCurrentDir(SMoveDir.Down);
             }
         }
 
+
+        //// 🔽🔽🔽 여기에 바로 추가 🔽🔽🔽
+        private SMoveDir ComputeHeldDir()
+        {
+            if (goleft && !noleft) return SMoveDir.Left;
+            if (goright && !noright) return SMoveDir.Right;
+            if (goup && !noup) return SMoveDir.Up;
+            if (godown && !nodown) return SMoveDir.Down;
+            return SMoveDir.None;
+        }
+
+        //// 🔼🔼🔼 여기 추가 끝 🔼🔼🔼
+
         private void Form1_KeyUp(object sender, KeyEventArgs e)
         {
-            if (e.KeyCode == Keys.Up || e.KeyCode == Keys.Down ||
-                e.KeyCode == Keys.Left || e.KeyCode == Keys.Right)
-            {
-                _client?.SetCurrentDir(Shared.MoveDir.None);
-            }
+            // 떼어진 키만 false로
+            if (e.KeyCode == Keys.Left) goleft = false;
+            if (e.KeyCode == Keys.Right) goright = false;
+            if (e.KeyCode == Keys.Up) goup = false;
+            if (e.KeyCode == Keys.Down) godown = false;
+
+            // 아직 눌린 다른 방향이 있으면 그쪽으로 즉시 전환 (None으로 잠깐 멈추지 않음)
+            var dir = ComputeHeldDir();      // 타입: SMoveDir
+            _client?.SetCurrentDir(dir);
         }
+
+
 
 
 
@@ -391,35 +429,40 @@ namespace PacmanGame
         {
             noleft = noright = noup = nodown = false;
 
+            // 이동 (클라 물리)
             PlayerMovements();
 
+            // ★ 클라에서 벽충돌/코인수집 항상 수행 (서버 완성 전 임시)
             foreach (Control wall in walls)
                 CheckBoundaries(pacman, wall);
 
-            // 안 보이는 코인은 건너뜀
             foreach (var coin in coins)
             {
                 if (!coin.Visible) continue;
                 CollectingCoins(pacman, coin);
             }
-            
-            var pacDir = GetPacDir();
-            // 👇 팩맨이 멈춰 있을 때는 고스트도 멈춤
-            if (!isRoundTransition)
-            {// 팩맨 현재 진행 방향
-                foreach (var g in ghosts)                 // 고스트 이동 호출 (벽, 방향 전달)
-                {
-                    g.GhostMovement(pacman, walls, pacDir);
 
-                    // 추가: 고스트를 자기 부모 컨테이너의 경계 안으로 강제 보정
+            // 유령 이동/충돌
+            var pacDir = GetPacDir();
+            if (!isRoundTransition)
+            {
+                foreach (var g in ghosts)
+                {
+                    g.GhostMovement(pacman, walls, (MoveDir)pacDir);
                     var parentSize = (g.image.Parent ?? this).ClientSize;
                     ClampInto(parentSize, g.image);
 
-                    // ★ 추가: 팩맨-고스트 충돌 시 게임오버
+                    // ★ 게임오버 판정도 클라에서 수행 (임시)
                     GhostCollision(pacman, g.image);
                 }
             }
+
+            // 🔕 서버 좌표로 강제 보정은 잠시 중단 (서버 판정 완성 전엔 싸움남)
+            // if (_serverAuthoritative && _lastSnapshot != null)
+            //     pacman.Location = new Point(_lastSnapshot.X, _lastSnapshot.Y);
         }
+
+
 
         // 시작버튼 누르면 => 라운드 1시작!
         private void StartButtonClick(object sender, EventArgs e)
@@ -548,31 +591,22 @@ namespace PacmanGame
 
         private void PlayerMovements()
         {
-            if (isRoundTransition) return; // 라운드 전환 중 이동 멈춤
+            if (isRoundTransition) return;        // 라운드 전환 중 이동 멈춤
+            if (_serverAuthoritative) return;     // 서버 권위면 로컬 이동 금지 (지금은 false라 통과)
 
-            //if (goleft) pacman.Left -= speed;
-            //if (goright) pacman.Left += speed;
-            //if (goup) pacman.Top -= speed;
-            //if (godown) pacman.Top += speed;
+            // === 실제 로컬 이동 ===
+            if (goleft && !noleft) pacman.Left -= speed;
+            if (goright && !noright) pacman.Left += speed;
+            if (goup && !noup) pacman.Top -= speed;
+            if (godown && !nodown) pacman.Top += speed;
 
-            //// 화면 좌우/상하 순간이동
-            //if (pacman.Left < -30)
-            //{
-            //    pacman.Left = this.ClientSize.Width - pacman.Width;
-            //}
-            //if (pacman.Left + pacman.Width > this.ClientSize.Width)
-            //{
-            //    pacman.Left = -10;
-            //}
-            //if (pacman.Top < -30)
-            //{
-            //    pacman.Top = this.ClientSize.Height - pacman.Height;
-            //}
-            //if (pacman.Top + pacman.Height > this.ClientSize.Height)
-            //{
-            //    pacman.Top = -10;
-            //}
+            // (선택) 화면 워프 이동 유지하고 싶으면 주석 해제
+            // if (pacman.Left < -30)                      pacman.Left = this.ClientSize.Width - pacman.Width;
+            // if (pacman.Left + pacman.Width > this.ClientSize.Width) pacman.Left = -10;
+            // if (pacman.Top < -30)                       pacman.Top = this.ClientSize.Height - pacman.Height;
+            // if (pacman.Top + pacman.Height > this.ClientSize.Height) pacman.Top = -10;
         }
+
 
 
 

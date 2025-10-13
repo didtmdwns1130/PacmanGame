@@ -8,6 +8,7 @@ namespace Shared
     public class InputCommand
     {
         public MoveDir Dir { get; set; }
+        public bool Reset { get; set; }   // ← 추가 (기본값 false)
         public InputCommand() { }
         public InputCommand(MoveDir dir) { Dir = dir; }
     }
@@ -28,6 +29,8 @@ namespace Shared
         // 기존 클라 호환용
         public int X { get; set; }
         public int Y { get; set; }
+
+        public bool IsAlive { get; set; }   // 💀 추가된 부분 (서버에서 전송용)
 
         public Snapshot() { }
         public Snapshot(int x, int y) { X = x; Y = y; }
