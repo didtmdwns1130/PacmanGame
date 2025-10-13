@@ -1,12 +1,10 @@
-﻿// Messages.cs  (서버/클라 둘 다 동일 파일)
-using System.Text;
+﻿using System.Text;
 using Newtonsoft.Json;
 
-namespace Shared   // ← 같은 네임스페이스로 두 프로젝트에 동일하게
+namespace Shared
 {
     public enum MoveDir { None, Up, Down, Left, Right }
 
-    // 클라 -> 서버 : 입력
     public class InputCommand
     {
         public MoveDir Dir { get; set; }
@@ -14,13 +12,30 @@ namespace Shared   // ← 같은 네임스페이스로 두 프로젝트에 동�
         public InputCommand(MoveDir dir) { Dir = dir; }
     }
 
-    // 서버 -> 클라 : 좌표 스냅샷 (MVP)
-    public class Snapshot
+    public class PlayerState
     {
+        public int Id { get; set; }
         public int X { get; set; }
         public int Y { get; set; }
+        public int Score { get; set; }
+    }
+
+    public class Snapshot
+    {
+        public long Tick { get; set; }
+        public PlayerState[] Players { get; set; } = System.Array.Empty<PlayerState>();
+
+        // 기존 클라 호환용
+        public int X { get; set; }
+        public int Y { get; set; }
+
         public Snapshot() { }
         public Snapshot(int x, int y) { X = x; Y = y; }
+        public Snapshot(long tick, PlayerState[] players)
+        {
+            Tick = tick;
+            Players = players ?? System.Array.Empty<PlayerState>();
+        }
     }
 
     public static class Msg

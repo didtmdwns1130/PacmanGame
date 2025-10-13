@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PacmanGame", "PacmanGame\Pa
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PacmanServer", "PacmanServer\PacmanServer.csproj", "{B9624F26-CA30-45A6-B158-4F4404FC7297}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shared", "Shared\Shared.csproj", "{A1638FBF-C2C6-44AF-9D1A-EDE2943BD3FD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{B9624F26-CA30-45A6-B158-4F4404FC7297}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B9624F26-CA30-45A6-B158-4F4404FC7297}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B9624F26-CA30-45A6-B158-4F4404FC7297}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1638FBF-C2C6-44AF-9D1A-EDE2943BD3FD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1638FBF-C2C6-44AF-9D1A-EDE2943BD3FD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1638FBF-C2C6-44AF-9D1A-EDE2943BD3FD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1638FBF-C2C6-44AF-9D1A-EDE2943BD3FD}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

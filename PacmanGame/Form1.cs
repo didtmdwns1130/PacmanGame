@@ -7,6 +7,8 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Shared;           // MoveDir, Snapshot
+
 
 namespace PacmanGame
 {
@@ -20,7 +22,7 @@ namespace PacmanGame
         int speed = 12;
         int score = 0;
 
-        private readonly GameClient _client = new GameClient(); // 서버 호출 추가
+        private GameClient _client; // 서버 호출 추가
 
 
         // 👇 여기에 추가
@@ -69,6 +71,8 @@ namespace PacmanGame
             SetUp();                         // 벽/코인 수집 (한 번만)
 
             this.DoubleBuffered = true;  // ← 깜빡임 감소
+            this.KeyPreview = true;          // ← 키 먼저 받기
+
         }
 
 
@@ -248,17 +252,52 @@ namespace PacmanGame
         {
 
         }
-
-        private void Form1_Load(object sender, EventArgs e)
+          
+        private async void Form1_Shown(object sender, EventArgs e)
         {
-            this.Shown += async (_, __) =>
-            {
-                await _client.ConnectAsync("127.0.0.1", 7777);
-                this.Text = "PacmanClient - Connected";
-            };
+            this.Text = "PacmanClient - Connecting...";   // 연결 시도 중 표시
+            _client = new GameClient();
+            _client.SnapshotReceived += OnSnapshot;
 
+            try
+            {
+                await _client.StartAsync("127.0.0.1", 7777);
+                this.Text = "PacmanClient - Connected";   // 성공 시 표시
+            }
+            catch (Exception ex)
+            {
+                this.Text = "Connect fail: " + ex.Message; // 실패 시 바로 원인 확인
+            }
         }
 
+
+        private void OnSnapshot(Shared.Snapshot snap)
+        {
+            if (this.IsDisposed) return;
+
+            if (this.InvokeRequired)
+            {
+                this.BeginInvoke((Action)(() => ApplySnapshot(snap)));
+            }
+            else
+            {
+                ApplySnapshot(snap);
+            }
+        }
+
+        private void ApplySnapshot(Shared.Snapshot snap)
+        {
+            // pacman은 PictureBox 이름이라고 가정
+            pacman.Left = snap.X;
+            pacman.Top = snap.Y;
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            try { _client?.Dispose(); } catch { }
+            base.OnFormClosed(e);
+        }
+        
         private void pictureBox1_Click(object sender, EventArgs e)
         {
 
@@ -301,7 +340,7 @@ namespace PacmanGame
 
         private void KeyIsDown(object sender, KeyEventArgs e)
         {
-            if (isRoundTransition) return; // 라운드 전환 중 입력 무시
+            if (isRoundTransition) return;
 
             if (e.KeyCode == Keys.Left && !noleft)
             {
@@ -309,30 +348,40 @@ namespace PacmanGame
                 noright = nodown = noup = false;
                 goleft = true;
                 pacman.Image = Properties.Resources.pacman_left;
+                _client?.SetCurrentDir(Shared.MoveDir.Left);
             }
-
             if (e.KeyCode == Keys.Right && !noright)
             {
                 goleft = goup = godown = false;
                 noleft = noup = nodown = false;
                 goright = true;
                 pacman.Image = Properties.Resources.pacman_right;
+                _client?.SetCurrentDir(Shared.MoveDir.Right);
             }
-
             if (e.KeyCode == Keys.Up && !noup)
             {
                 goleft = goright = godown = false;
                 noleft = noright = nodown = false;
                 goup = true;
                 pacman.Image = Properties.Resources.pacman_up;
+                _client?.SetCurrentDir(Shared.MoveDir.Up);
             }
-
             if (e.KeyCode == Keys.Down && !nodown)
             {
                 goleft = goright = goup = false;
                 noleft = noright = noup = false;
                 godown = true;
                 pacman.Image = Properties.Resources.pacman_down;
+                _client?.SetCurrentDir(Shared.MoveDir.Down);
+            }
+        }
+
+        private void Form1_KeyUp(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Up || e.KeyCode == Keys.Down ||
+                e.KeyCode == Keys.Left || e.KeyCode == Keys.Right)
+            {
+                _client?.SetCurrentDir(Shared.MoveDir.None);
             }
         }
 
@@ -501,28 +550,28 @@ namespace PacmanGame
         {
             if (isRoundTransition) return; // 라운드 전환 중 이동 멈춤
 
-            if (goleft) pacman.Left -= speed;
-            if (goright) pacman.Left += speed;
-            if (goup) pacman.Top -= speed;
-            if (godown) pacman.Top += speed;
+            //if (goleft) pacman.Left -= speed;
+            //if (goright) pacman.Left += speed;
+            //if (goup) pacman.Top -= speed;
+            //if (godown) pacman.Top += speed;
 
-            // 화면 좌우/상하 순간이동
-            if (pacman.Left < -30)
-            {
-                pacman.Left = this.ClientSize.Width - pacman.Width;
-            }
-            if (pacman.Left + pacman.Width > this.ClientSize.Width)
-            {
-                pacman.Left = -10;
-            }
-            if (pacman.Top < -30)
-            {
-                pacman.Top = this.ClientSize.Height - pacman.Height;
-            }
-            if (pacman.Top + pacman.Height > this.ClientSize.Height)
-            {
-                pacman.Top = -10;
-            }
+            //// 화면 좌우/상하 순간이동
+            //if (pacman.Left < -30)
+            //{
+            //    pacman.Left = this.ClientSize.Width - pacman.Width;
+            //}
+            //if (pacman.Left + pacman.Width > this.ClientSize.Width)
+            //{
+            //    pacman.Left = -10;
+            //}
+            //if (pacman.Top < -30)
+            //{
+            //    pacman.Top = this.ClientSize.Height - pacman.Height;
+            //}
+            //if (pacman.Top + pacman.Height > this.ClientSize.Height)
+            //{
+            //    pacman.Top = -10;
+            //}
         }
 
 
@@ -644,6 +693,3 @@ namespace PacmanGame
         }
     }
 }
-
-// test commit
-// test commit 2
