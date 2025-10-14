@@ -6,7 +6,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
-using Shared; // MoveDir, InputCommand, Snapshot
+using Shared; // MoveDir, InputMsg, Snapshot 
 
 namespace PacmanGame
 {
@@ -15,6 +15,11 @@ namespace PacmanGame
         private TcpClient _tcp;
         private StreamReader _reader;
         private StreamWriter _writer;
+
+        // 서버에서 내 PlayerId를 알려줄 때 사용
+        public int MyPlayerId { get; private set; } = -1;
+        public event Action<int> WelcomeReceived;
+
         private CancellationTokenSource _cts;
 
         private Shared.MoveDir _currentDir = Shared.MoveDir.None; // ← 충돌 방지 위해 완전수식
@@ -50,16 +55,24 @@ namespace PacmanGame
         private void SendInput()
         {
             if (!IsConnected) return;
+
             try
             {
-                var json = JsonConvert.SerializeObject(new Shared.InputCommand { Dir = _currentDir });
-                _writer.WriteLine(json); // 한 줄(JSON)
+                // ✅ PlayerId 포함하여 전송
+                var json = JsonConvert.SerializeObject(new Shared.InputMsg
+                {
+                    PlayerId = MyPlayerId,   // ← 핵심
+                    Dir = _currentDir
+                });
+
+                _writer.WriteLine(json);
             }
             catch
             {
                 // 끊김 등은 수신 루프/Dispose에서 처리
             }
         }
+
 
         private async Task ReceiveLoopAsync(CancellationToken ct)
         {
@@ -72,15 +85,31 @@ namespace PacmanGame
 
                     try
                     {
-                        // 스냅샷만 골라 처리, 비JSON/안내문/빈줄이면 무시
-                        var snap = JsonConvert.DeserializeObject<Shared.Snapshot>(line);
-                        if (snap != null)
-                            SnapshotReceived?.Invoke(snap);
+                        // === 1) WELCOME 메시지 확인 ===
+                        if (line.Contains("\"WELCOME\""))
+                        {
+                            var w = JsonConvert.DeserializeObject<Shared.WelcomeMsg>(line);
+                            if (w != null && w.Type == "WELCOME")
+                            {
+                                MyPlayerId = w.PlayerId;
+                                WelcomeReceived?.Invoke(MyPlayerId);
+                                continue; // 다음 줄로
+                            }
+                        }
+
+                        // === 2) SNAPSHOT 메시지 ===
+                        if (line.Contains("\"SNAPSHOT\""))
+                        {
+                            var snap = JsonConvert.DeserializeObject<Shared.Snapshot>(line);
+                            if (snap != null)
+                                SnapshotReceived?.Invoke(snap);
+                        }
                     }
                     catch
                     {
                         // 잘못된 라인(비JSON)은 무시하고 다음 줄 대기 → 연결 유지
                     }
+
                 }
             }
             finally

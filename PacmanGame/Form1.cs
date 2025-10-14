@@ -27,17 +27,19 @@ namespace PacmanGame
         private GameClient _client; // 서버 호출 추가
         private bool _isAlive = true;   // ← 여기 추가
 
+
         // 서버 완성 전 임시로 클라 판정 사용
-        private readonly bool _serverAuthoritative = false;
+        private readonly bool _serverAuthoritative = true;
         private Snapshot _lastSnapshot;
 
-
-
+        // 🔥 서버 스냅샷으로 그릴 플레이어 스프라이트 캐시 추가
+        private readonly Dictionary<int, PictureBox> playerSprites = new Dictionary<int, PictureBox>();
 
         // 👇 여기에 추가
         Panel gameOverPanel;
         Label gameOverLabel;
         Button btnRetry, btnExit;
+
 
         // 여기에 한 줄 추가
         FlowLayoutPanel panelButtons;
@@ -281,6 +283,8 @@ namespace PacmanGame
             {
                 await _client.StartAsync("127.0.0.1", 7777);
                 this.Text = "PacmanClient - Connected";   // 성공 시 표시
+                // 서버 권위면 디자이너 pacman 숨기기 (스냅샷 스프라이트만 보이게)
+                if (_serverAuthoritative) pacman.Visible = false;
             }
             catch (Exception ex)
             {
@@ -288,25 +292,76 @@ namespace PacmanGame
             }
         }
 
+        private void ClearPlayerSprites()
+        {
+            foreach (var kv in playerSprites)
+            {
+                if (kv.Value != null)
+                {
+                    this.Controls.Remove(kv.Value);
+                    kv.Value.Dispose();
+                }
+            }
+            playerSprites.Clear();
+        }
 
         private void OnSnapshot(Shared.Snapshot snap)
         {
             if (this.IsDisposed) return;
-
             if (this.InvokeRequired)
             {
-                this.BeginInvoke(new Action(() => OnSnapshot(snap)));
+                BeginInvoke(new Action(() => OnSnapshot(snap)));
                 return;
             }
 
-            // ★ 저장만 해두고, 좌표는 GameTimerEvent에서 필요시 쓸 것
-            _lastSnapshot = snap;
-
-            // 🔕 서버 좌표 즉시 적용 잠시 중단 (클라 물리 복구 상태)
-            // pacman.Location = new Point(snap.X, snap.Y);
-
-            _isAlive = snap.IsAlive;
+            // 서버가 보낸 전체 상태를 즉시 반영
+            UpdatePlayersFromSnapshot(snap);
+            _lastSnapshot = snap; // 필요하면 유지 (지금은 안 써도 됨)
         }
+
+        private void UpdatePlayersFromSnapshot(Shared.Snapshot snap)
+        {
+            // 1) 스냅샷에 있는 플레이어 전부 그리기/갱신
+            foreach (var ps in snap.Players)
+            {
+                if (!playerSprites.TryGetValue(ps.Id, out var sprite))
+                {
+                    sprite = new PictureBox
+                    {
+                        Size = new Size(32, 32),
+                        BackColor = (ps.Id == 1 ? Color.Yellow :
+                                     ps.Id == 2 ? Color.Red :
+                                     ps.Id == 3 ? Color.Blue : Color.Green)
+                    };
+                    this.Controls.Add(sprite);
+                    playerSprites[ps.Id] = sprite;
+                }
+
+                sprite.Left = ps.X;
+                sprite.Top = ps.Y;
+                sprite.Visible = ps.IsAlive;
+                sprite.BringToFront();
+            }
+
+            // 2) 스냅샷에 없는(=끊긴) 플레이어 정리
+            var liveIds = new HashSet<int>(snap.Players.Select(p => p.Id));
+            var toRemove = new List<int>();
+            foreach (var kv in playerSprites)
+                if (!liveIds.Contains(kv.Key))
+                    toRemove.Add(kv.Key);
+
+            foreach (var id in toRemove)
+            {
+                var pb = playerSprites[id];
+                if (pb != null)
+                {
+                    this.Controls.Remove(pb);
+                    pb.Dispose();
+                }
+                playerSprites.Remove(id);
+            }
+        }
+
 
 
 
@@ -427,6 +482,13 @@ namespace PacmanGame
 
         private void GameTimerEvent(object sender, EventArgs e)
         {
+            // 서버 권위일 때는 클라 쪽 물리/충돌/코인/유령 판정 전부 스킵
+            if (_serverAuthoritative)
+            {
+                // (그림은 OnSnapshot -> UpdatePlayersFromSnapshot에서만 수행)
+                return;
+            }
+
             noleft = noright = noup = nodown = false;
 
             // 이동 (클라 물리)
@@ -457,10 +519,11 @@ namespace PacmanGame
                 }
             }
 
-            // 🔕 서버 좌표로 강제 보정은 잠시 중단 (서버 판정 완성 전엔 싸움남)
+            // 🔕 서버 좌표 강제보정 코드는 주석 유지
             // if (_serverAuthoritative && _lastSnapshot != null)
             //     pacman.Location = new Point(_lastSnapshot.X, _lastSnapshot.Y);
         }
+
 
 
 
@@ -470,6 +533,9 @@ namespace PacmanGame
             // 메뉴 숨기기
             panelMenu.Enabled = false;
             panelMenu.Visible = false;
+
+            // 서버 권위 스프라이트 싹 정리 (서버 모드일 때 기존 잔상 제거)
+            if (_serverAuthoritative) ClearPlayerSprites();
 
             // 입력/상태 초기화
             goleft = goright = goup = godown = false;
