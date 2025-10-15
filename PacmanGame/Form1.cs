@@ -1,816 +1,567 @@
-﻿using System;
+﻿// Form1.cs — 단일 파일(디자이너 미사용), C# 7.3 호환
+using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
 using System.Drawing;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.IO;
 using System.Windows.Forms;
-using Shared;           // MoveDir, Snapshot
-using System.Diagnostics;
-using SMoveDir = Shared.MoveDir;
-
 
 namespace PacmanGame
 {
-
     public partial class Form1 : Form
     {
-        bool goup, godown, goleft, goright;
-        bool noup, nodown, noleft, noright;
-        List<Control> walls = new List<Control>();
-        List<PictureBox> coins = new List<PictureBox>();
-        int speed = 12;
-        int score = 0;
+        // -----------------------------
+        // 필드
+        // -----------------------------
+        private Panel panelBoard;
+        private Panel panelStart;
+        private Label lblCenterTitle;
+        private Label lblPlay;
+        private Label lblHelp;
+        private PictureBox picPacman;
+        private PictureBox picGhostTL, picGhostTR, picGhostBL, picGhostBR;
 
-        private GameClient _client; // 서버 호출 추가
-        private bool _isAlive = true;   // ← 여기 추가
+        private readonly List<PictureBox> coins = new List<PictureBox>();
+        private readonly HashSet<Point> coinPoints = new HashSet<Point>(); // 코인 중복 방지
+        private bool _innerCoinsAdded = false; // (현재는 사용 안 하지만 유지)
 
+        // 애니메이션 / 방향
+        private Timer pacmanAnimTimer;
+        private bool pacmanMouthOpen = true;
+        private enum Dir { Right, Left, Up, Down }
+        private Dir pacmanDir = Dir.Right; // 시작은 오른쪽을 바라봄
 
-        // 서버 완성 전 임시로 클라 판정 사용
-        private readonly bool _serverAuthoritative = true;
-        private Snapshot _lastSnapshot;
+        private enum GhostEye { Left, Right, Up, Down }
 
-        // 🔥 서버 스냅샷으로 그릴 플레이어 스프라이트 캐시 추가
-        private readonly Dictionary<int, PictureBox> playerSprites = new Dictionary<int, PictureBox>();
+        private readonly string assetDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets");
 
-        // 👇 여기에 추가
-        Panel gameOverPanel;
-        Label gameOverLabel;
-        Button btnRetry, btnExit;
-
-
-        // 여기에 한 줄 추가
-        FlowLayoutPanel panelButtons;
-
-        // Form1 클래스 필드들 위쪽에 추가
-        int round = 1;
-        Point pacmanStart;            // 시작 위치 기억
-        bool isRoundTransition = false;  // 라운드 전환 중 입력/이동 잠깐 막기
-
-        Label centerPopup;            // 중앙 팝업 라벨
-        Timer popupTimer;             // 팝업 자동 숨김
-
-
-        Ghost red, yellow, blue, pink;  // 빨강, 노랑, 파랑, 분홍 고스트 객체 선언
-        List<Ghost> ghosts = new List<Ghost>();  // 여러 고스트(몬스터) 객체를 저장하기 위한 리스트 생성
-
-        // 🔽🔽🔽 여기 추가 (메서드 안 X, 클래스 필드 구역 O)
-        List<Point> ghostStartPositions = new List<Point>();
-
-
-        private SMoveDir GetPacDir()
-        {
-            if (goleft) return SMoveDir.Left;
-            if (goright) return SMoveDir.Right;
-            if (goup) return SMoveDir.Up;
-            if (godown) return SMoveDir.Down;
-            return SMoveDir.None;
-        }
-
-
-
+        // -----------------------------
+        // 생성자
+        // -----------------------------
         public Form1()
         {
+            SetStyle(ControlStyles.AllPaintingInWmPaint |
+                     ControlStyles.UserPaint |
+                     ControlStyles.OptimizedDoubleBuffer, true);
+            UpdateStyles();
             InitializeComponent();
-
-            // 추가
-            this.Shown += (_, __) =>
-            {
-                System.Diagnostics.Debug.WriteLine(
-                    $"PACMAN_START={pacman.Location.X},{pacman.Location.Y}"
-                );
-            };
-
-            pacmanStart = pacman.Location;   // 팩맨 시작 위치 저장
-            PrepareCenterPopup();            // 중앙 팝업 준비
-            PrepareGameOverUI();             // 추가
-
-
-            SetUp();                         // 벽/코인 수집 (한 번만)
-
-            this.DoubleBuffered = true;  // ← 깜빡임 감소
-            this.KeyPreview = true;          // ← 키 먼저 받기
-
         }
 
-
-        private void ShowCenterPopup(string text)
+        // -----------------------------
+        // InitializeComponent
+        // -----------------------------
+        private void InitializeComponent()
         {
-            centerPopup.Text = text;
-            // 중앙 배치
-            centerPopup.Left = (this.ClientSize.Width - centerPopup.Width) / 2;
-            centerPopup.Top = (this.ClientSize.Height - centerPopup.Height) / 2;
-            centerPopup.Visible = true;
-            centerPopup.BringToFront();
-            popupTimer.Stop();
-            popupTimer.Start();
-        }
+            this.SuspendLayout();
 
-        private void PrepareCenterPopup()
-        {
-            centerPopup = new Label();
-            centerPopup.AutoSize = true;
-            centerPopup.BackColor = Color.FromArgb(200, 0, 0, 0); // 반투명 검정
-            centerPopup.ForeColor = Color.Yellow;
-            centerPopup.Font = new Font(FontFamily.GenericSansSerif, 24, FontStyle.Bold);
-            centerPopup.Visible = false;
-            centerPopup.Padding = new Padding(16, 10, 16, 10);
-            centerPopup.Name = "centerPopup";
-            this.Controls.Add(centerPopup);
-            centerPopup.BringToFront();
+            // Form 기본 설정
+            this.AutoScaleDimensions = new SizeF(96F, 96F);
+            this.AutoScaleMode = AutoScaleMode.Dpi;
+            this.ClientSize = new Size(720, 720);
+            this.StartPosition = FormStartPosition.CenterScreen;
+            this.Text = "PacmanClient - Connected";
+            this.BackColor = Color.FromArgb(24, 24, 24);
+            this.KeyPreview = true;
+            this.KeyDown += Form1_KeyDown;
 
-            popupTimer = new Timer();
-            popupTimer.Interval = 1200; // 1.2초 보여주기
-            popupTimer.Tick += (s, e) =>
+            // 보드 패널 (정사각)
+            panelBoard = new Panel
             {
-                popupTimer.Stop();
-                centerPopup.Visible = false;
-                isRoundTransition = false;   // 전환 종료 → 다시 조작 가능
+                Name = "panelBoard",
+                BackColor = Color.Black,
+                Size = new Size(600, 600),
+                Location = new Point((this.ClientSize.Width - 600) / 2, (this.ClientSize.Height - 600) / 2)
             };
-        }
+            var db = panelBoard.GetType().GetProperty("DoubleBuffered",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            if (db != null) db.SetValue(panelBoard, true, null);
+            this.Controls.Add(panelBoard);
 
-        // 👇👇 여기에 두 함수 붙여넣기 👇👇
-        private void PrepareGameOverUI()
-        {
-            gameOverPanel = new Panel
+            // 푸른색 블럭 프레임(사면 타일)
+            AddBlueBlockFrameTiled();
+
+            // 고스트 4마리 (표정 포함)
+            picGhostTL = MakeGhost("picGhostTL", Color.IndianRed, GhostEye.Right);
+            picGhostTR = MakeGhost("picGhostTR", Color.DeepSkyBlue, GhostEye.Left);
+            picGhostBL = MakeGhost("picGhostBL", Color.Orange, GhostEye.Up);
+            picGhostBR = MakeGhost("picGhostBR", Color.HotPink, GhostEye.Down);
+
+            int g = 40, m = 90;
+            picGhostTL.Location = new Point(m, m);
+            picGhostTR.Location = new Point(panelBoard.Width - m - g, m);
+            picGhostBL.Location = new Point(m, panelBoard.Height - m - g);
+            picGhostBR.Location = new Point(panelBoard.Width - m - g, panelBoard.Height - m - g);
+
+            panelBoard.Controls.Add(picGhostTL);
+            panelBoard.Controls.Add(picGhostTR);
+            panelBoard.Controls.Add(picGhostBL);
+            panelBoard.Controls.Add(picGhostBR);
+
+            // ⭐ 코인: 테두리는 유지, 내부는 작은 사각형 4개만
+            BuildCleanCoinLayout();
+
+            // 시작 오버레이 (팩맨 뒤, play 라벨 최상단)
+            panelStart = new Panel
             {
-                Size = new Size(360, 200),
-                BackColor = Color.FromArgb(240, 50, 70, 150),
-                Visible = false
+                Name = "panelStart",
+                BackColor = Color.Transparent,
+                Size = panelBoard.Size,
+                Location = new Point(0, 0)
             };
-            this.Controls.Add(gameOverPanel);
-            gameOverPanel.BringToFront();
 
-            gameOverLabel = new Label
+            // 팩맨(오버레이에 먼저 올림)
+            picPacman = new PictureBox
             {
+                Name = "picPacman",
+                Size = new Size(44, 44),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.Transparent,
+                Location = new Point(panelStart.Width / 2 - 22, panelStart.Height / 2 - 56)
+            };
+            panelStart.Controls.Add(picPacman);
+            picPacman.SendToBack();
+
+            // 중앙 타이틀
+            lblCenterTitle = new Label
+            {
+                Name = "lblCenterTitle",
                 AutoSize = false,
-                Dock = DockStyle.Top,
-                Height = 110,
+                Text = "Pac Man! - YSJ",
                 TextAlign = ContentAlignment.MiddleCenter,
                 ForeColor = Color.Gold,
-                Font = new Font(FontFamily.GenericSansSerif, 16, FontStyle.Bold)
+                BackColor = Color.Black,
+                Font = new Font("Segoe UI", 18F, FontStyle.Bold),
+                Size = new Size(420, 40),
+                Location = new Point(panelStart.Width / 2 - 210, panelStart.Height / 2 - 118)
             };
-            
-            gameOverPanel.Controls.Add(gameOverLabel);
+            panelStart.Controls.Add(lblCenterTitle);
 
-            panelButtons = new FlowLayoutPanel
+            // 하얀 "play" 라벨
+            lblPlay = new Label
             {
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                WrapContents = false,
-                FlowDirection = FlowDirection.LeftToRight,
-                BackColor = Color.Transparent,
-                Margin = new Padding(0),
-                Padding = new Padding(0)
+                Name = "lblPlay",
+                AutoSize = false,
+                Text = "play",
+                TextAlign = ContentAlignment.MiddleCenter,
+                ForeColor = Color.Black,
+                BackColor = Color.White,
+                Font = new Font("Segoe UI", 14F, FontStyle.Bold),
+                Size = new Size(160, 50),
+                Location = new Point(panelStart.Width / 2 - 80, panelStart.Height / 2 - 8),
+                Cursor = Cursors.Hand
             };
-            gameOverPanel.Controls.Add(panelButtons);
+            lblPlay.Click += StartOverlay_Click;
+            panelStart.Controls.Add(lblPlay);
+            lblPlay.BringToFront();
 
-
-
-            // 1) 버튼 생성
-            btnRetry = new Button
+            // 도움말
+            lblHelp = new Label
             {
-                Text = "다시 시작",
-                Width = 140,
-                Height = 40
+                Name = "lblHelp",
+                AutoSize = false,
+                Text = "UP/DOWN/LEFT/RIGHT",
+                TextAlign = ContentAlignment.MiddleCenter,
+                ForeColor = Color.Gold,
+                BackColor = Color.Black,
+                Font = new Font("Segoe UI", 12F, FontStyle.Bold),
+                Size = new Size(360, 26),
+                Location = new Point(panelStart.Width / 2 - 180, panelStart.Height / 2 + 64)
             };
+            panelStart.Controls.Add(lblHelp);
 
-            btnExit = new Button
-            {
-                Text = "종료",
-                Width = 100,
-                Height = 40
-            };
+            panelBoard.Controls.Add(panelStart);
+            panelStart.BringToFront();
 
-            // 2) 생성 이후에 마진 지정
-            btnRetry.Margin = new Padding(10, 10, 10, 10);
-            btnExit.Margin = new Padding(10, 10, 10, 10);
+            // 시작 화면에서도 오른쪽 보며 껌뻑 시작
+            StartPacmanAnimation();
 
-            // 3) 버튼을 패널에 추가
-            panelButtons.Controls.Add(btnRetry);
-            panelButtons.Controls.Add(btnExit);
-
-            // 4) 중앙 정렬 유지
-            CenterButtons();
-            gameOverPanel.SizeChanged += (s, e) => CenterButtons();
-
-
-
-
-            btnRetry.Click += (s, e) =>
-            {
-                gameOverPanel.Visible = false;
-
-                // 👇 추가: 모든 고스트를 시작 위치로 되돌림
-                for (int i = 0; i < ghosts.Count && i < ghostStartPositions.Count; i++)
-                    ghosts[i].image.Location = ghostStartPositions[i];
-
-                score = 0;
-                round = 1;
-                UpdateScoreUI();
-                NextRound();
-                GameTimer.Start();
-
-                // ← 포커스 보장
-                this.KeyPreview = true;
-                this.ActiveControl = null;
-                this.Focus();
-            };
-
-            btnExit.Click += (s, e) =>
-            {
-                gameOverPanel.Visible = false;
-                panelMenu.Enabled = true;
-                panelMenu.Visible = true;
-            };
+            this.ResumeLayout(false);
         }
 
-        private void ShowGameOverOverlay()
+        // -----------------------------
+        // 이벤트 핸들러
+        // -----------------------------
+        // play 클릭
+        private void StartOverlay_Click(object sender, EventArgs e)
         {
-            string text = $"GAME OVER\n\nScore: {score}\nRound: {round}";
-            gameOverLabel.Text = text;
-
-            gameOverPanel.Left = (this.ClientSize.Width - gameOverPanel.Width) / 2;
-            gameOverPanel.Top = (this.ClientSize.Height - gameOverPanel.Height) / 2;
-
-            gameOverPanel.Visible = true;
-            gameOverPanel.BringToFront();
-            CenterButtons(); // 👈 여기에 추가
-
-        }
-
-        private void CenterButtons()
-        {
-            if (panelButtons == null || gameOverPanel == null) return;
-
-            // 버튼 컨테이너의 총 폭 계산 (AutoSize=true 이므로 PreferredSize 사용)
-            int contentWidth = panelButtons.PreferredSize.Width;
-
-            // 패널 가운데 정렬 위치 계산
-            int x = (gameOverPanel.Width - contentWidth) / 2;
-            int y = gameOverPanel.Height - panelButtons.PreferredSize.Height - 16; // 아래 여백 약간
-
-            // 위치 적용
-            panelButtons.Location = new Point(Math.Max(0, x), Math.Max(0, y));
-        }
-
-        private void UpdateScoreUI()
-        {
-            this.Text = $"Pacman - Score: {score} | 남은 코인: {coins.Count(c => c.Visible)} | Round: {round}"; // 남은 코인 표기
-
-            var found = this.Controls.Find("lblScore", true);
-            if (found.Length > 0 && found[0] is Label lab)
-                lab.Text = score.ToString();
-        }
-
-
-
-
-        private void label1_Click(object sender, EventArgs e)
-        {
-
-        }
-          
-        private async void Form1_Shown(object sender, EventArgs e)
-        {
-            this.Text = "PacmanClient - Connecting...";   // 연결 시도 중 표시
-            _client = new GameClient();
-            _client.SnapshotReceived += OnSnapshot;
-
-            try
+            // 팩맨을 보드 중앙에 남기기
+            if (picPacman.Parent == panelStart)
             {
-                await _client.StartAsync("127.0.0.1", 7777);
-                this.Text = "PacmanClient - Connected";   // 성공 시 표시
-                // 서버 권위면 디자이너 pacman 숨기기 (스냅샷 스프라이트만 보이게)
-                if (_serverAuthoritative) pacman.Visible = false;
+                panelStart.Controls.Remove(picPacman);
+                panelBoard.Controls.Add(picPacman);
             }
-            catch (Exception ex)
+            picPacman.Location = new Point(panelBoard.Width / 2 - picPacman.Width / 2,
+                                           panelBoard.Height / 2 - picPacman.Height / 2);
+            picPacman.BringToFront();
+
+            // 오버레이 제거
+            if (panelStart != null && !panelStart.IsDisposed)
             {
-                this.Text = "Connect fail: " + ex.Message; // 실패 시 바로 원인 확인
+                panelStart.Hide();
+                panelStart.Dispose();
+                panelStart = null;
+            }
+
+            panelBoard.Invalidate();
+            panelBoard.Update();
+            panelBoard.Focus();
+
+            StartPacmanAnimation();
+        }
+
+        // 방향키 입력 → 보는 방향만 변경
+        private void Form1_KeyDown(object sender, KeyEventArgs e)
+        {
+            var prev = pacmanDir;
+            if (e.KeyCode == Keys.Right) pacmanDir = Dir.Right;
+            else if (e.KeyCode == Keys.Left) pacmanDir = Dir.Left;
+            else if (e.KeyCode == Keys.Up) pacmanDir = Dir.Up;
+            else if (e.KeyCode == Keys.Down) pacmanDir = Dir.Down;
+
+            if (prev != pacmanDir && picPacman != null)
+            {
+                if (picPacman.Image != null) picPacman.Image.Dispose();
+                picPacman.Image = DrawPacmanFrame(pacmanMouthOpen, pacmanDir);
             }
         }
 
-        private void ClearPlayerSprites()
+        // -----------------------------
+        // 팩맨 애니메이션
+        // -----------------------------
+        private void StartPacmanAnimation()
         {
-            foreach (var kv in playerSprites)
+            if (pacmanAnimTimer == null)
             {
-                if (kv.Value != null)
+                pacmanAnimTimer = new Timer();
+                pacmanAnimTimer.Interval = 140; // 0.14초로 약간 빠르게
+                pacmanAnimTimer.Tick += (s, ev) =>
                 {
-                    this.Controls.Remove(kv.Value);
-                    kv.Value.Dispose();
-                }
-            }
-            playerSprites.Clear();
-        }
-
-        private void OnSnapshot(Shared.Snapshot snap)
-        {
-            if (this.IsDisposed) return;
-            if (this.InvokeRequired)
-            {
-                BeginInvoke(new Action(() => OnSnapshot(snap)));
-                return;
+                    if (picPacman == null) return;
+                    if (picPacman.Image != null) picPacman.Image.Dispose();
+                    picPacman.Image = DrawPacmanFrame(pacmanMouthOpen, pacmanDir);
+                    pacmanMouthOpen = !pacmanMouthOpen;
+                };
             }
 
-            // 서버가 보낸 전체 상태를 즉시 반영
-            UpdatePlayersFromSnapshot(snap);
-            _lastSnapshot = snap; // 필요하면 유지 (지금은 안 써도 됨)
+            pacmanMouthOpen = true; // 프레임 초기화
+            if (picPacman.Image != null) picPacman.Image.Dispose();
+            picPacman.Image = DrawPacmanFrame(pacmanMouthOpen, pacmanDir);
+            pacmanAnimTimer.Start();
         }
 
-        private void UpdatePlayersFromSnapshot(Shared.Snapshot snap)
+        // 입 껌뻑 + 방향 정확(상/하/좌/우로만)
+        private Image DrawPacmanFrame(bool mouthOpen, Dir dir)
         {
-            // 1) 스냅샷에 있는 플레이어 전부 그리기/갱신
-            foreach (var ps in snap.Players)
+            Bitmap bmp = new Bitmap(44, 44);
+            using (Graphics g = Graphics.FromImage(bmp))
             {
-                if (!playerSprites.TryGetValue(ps.Id, out var sprite))
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.Clear(Color.Transparent);
+
+                using (var br = new SolidBrush(Color.Gold))
+                    g.FillEllipse(br, 2, 2, 40, 40);
+
+                // 입 크기(각도)
+                int sweep = mouthOpen ? 60 : 12;
+
+                // 방향의 중앙각 (0=Right, 90=Down, 180=Left, 270=Up)
+                int center = 0;
+                switch (dir)
                 {
-                    sprite = new PictureBox
-                    {
-                        Size = new Size(32, 32),
-                        BackColor = (ps.Id == 1 ? Color.Yellow :
-                                     ps.Id == 2 ? Color.Red :
-                                     ps.Id == 3 ? Color.Blue : Color.Green)
-                    };
-                    this.Controls.Add(sprite);
-                    playerSprites[ps.Id] = sprite;
+                    case Dir.Left: center = 180; break;
+                    case Dir.Up: center = 270; break;
+                    case Dir.Down: center = 90; break;
                 }
+                // 중앙각을 기준으로 좌우 대칭
+                int start = center - sweep / 2;
 
-                sprite.Left = ps.X;
-                sprite.Top = ps.Y;
-                sprite.Visible = ps.IsAlive;
-                sprite.BringToFront();
+                using (var bg = new SolidBrush(Color.Black))
+                    g.FillPie(bg, 2, 2, 40, 40, start, sweep);
             }
+            return bmp;
+        }
 
-            // 2) 스냅샷에 없는(=끊긴) 플레이어 정리
-            var liveIds = new HashSet<int>(snap.Players.Select(p => p.Id));
-            var toRemove = new List<int>();
-            foreach (var kv in playerSprites)
-                if (!liveIds.Contains(kv.Key))
-                    toRemove.Add(kv.Key);
-
-            foreach (var id in toRemove)
+        // -----------------------------
+        // 골드 코인 드로잉
+        // -----------------------------
+        private Image DrawCoinBitmap(int w, int h)
+        {
+            Bitmap bmp = new Bitmap(w, h);
+            using (Graphics g = Graphics.FromImage(bmp))
             {
-                var pb = playerSprites[id];
-                if (pb != null)
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.Clear(Color.Transparent);
+
+                using (var br = new SolidBrush(Color.Gold))
+                    g.FillEllipse(br, 0, 0, w - 1, h - 1);
+
+                using (var hi = new SolidBrush(Color.FromArgb(230, 255, 235)))
+                    g.FillEllipse(hi, (int)(w * 0.18f), (int)(h * 0.18f), (int)(w * 0.38f), (int)(h * 0.38f));
+
+                using (var pen = new Pen(Color.FromArgb(180, 140, 80), 2f))
+                    g.DrawEllipse(pen, 1, 1, w - 3, h - 3);
+
+                using (var pen2 = new Pen(Color.FromArgb(240, 210, 90), 2f))
+                    g.DrawEllipse(pen2, (int)(w * 0.18f), (int)(h * 0.18f), (int)(w * 0.64f), (int)(h * 0.64f));
+            }
+            return bmp;
+        }
+
+        // -----------------------------
+        // 프레임/코인/고스트 유틸
+        // -----------------------------
+        private void AddBlueBlockFrameTiled()
+        {
+            Color teal = Color.FromArgb(0, 190, 190);
+            int tile = 34, gap = 16, margin = 18;
+
+            // 상/하
+            int usableW = panelBoard.Width + (tile + gap) - 1;
+            int countTop = Math.Max(1, usableW / (tile + gap));
+            int startX = panelBoard.Left - ((countTop * (tile + gap) - panelBoard.Width) / 2);
+
+            for (int i = 0; i < countTop; i++)
+            {
+                int x = startX + i * (tile + gap);
+                var top = new Panel
                 {
-                    this.Controls.Remove(pb);
-                    pb.Dispose();
-                }
-                playerSprites.Remove(id);
-            }
-        }
-
-
-
-
-
-        protected override void OnFormClosed(FormClosedEventArgs e)
-        {
-            try { _client?.Dispose(); } catch { }
-            base.OnFormClosed(e);
-        }
-        
-        private void pictureBox1_Click(object sender, EventArgs e)
-        {
-
-        }
-
-        private void pictureBox2_Click(object sender, EventArgs e)
-        {
-
-        }
-
-        private void pictureBox7_Click(object sender, EventArgs e)
-        {
-
-        }
-
-        private void pictureBox6_Click(object sender, EventArgs e)
-        {
-
-        }
-
-        private void pictureBox11_Click(object sender, EventArgs e)
-        {
-
-        }
-
-        private void label9_Click(object sender, EventArgs e)
-        {
-
-        }
-
-        private void label9_Click_1(object sender, EventArgs e)
-        {
-
-        }
-
-        private void label10_Click(object sender, EventArgs e)
-        {
-
-        }
-
-        private void KeyIsDown(object sender, KeyEventArgs e)
-        {
-            if (isRoundTransition) return;
-
-            if (e.KeyCode == Keys.Left && !noleft)
-            {
-                goright = godown = goup = false;
-                noright = nodown = noup = false;
-                goleft = true;
-                pacman.Image = Properties.Resources.pacman_left;
-                _client?.SetCurrentDir(SMoveDir.Left);
-            }
-            else if (e.KeyCode == Keys.Right && !noright)
-            {
-                goleft = goup = godown = false;
-                noleft = noup = nodown = false;
-                goright = true;
-                pacman.Image = Properties.Resources.pacman_right;
-                _client?.SetCurrentDir(SMoveDir.Right);
-            }
-            else if (e.KeyCode == Keys.Up && !noup)
-            {
-                goleft = goright = godown = false;
-                noleft = noright = nodown = false;
-                goup = true;
-                pacman.Image = Properties.Resources.pacman_up;
-                _client?.SetCurrentDir(SMoveDir.Up);
-            }
-            else if (e.KeyCode == Keys.Down && !nodown)
-            {
-                goleft = goright = goup = false;
-                noleft = noright = noup = false;
-                godown = true;
-                pacman.Image = Properties.Resources.pacman_down;
-                _client?.SetCurrentDir(SMoveDir.Down);
-            }
-        }
-
-
-        //// 🔽🔽🔽 여기에 바로 추가 🔽🔽🔽
-        private SMoveDir ComputeHeldDir()
-        {
-            if (goleft && !noleft) return SMoveDir.Left;
-            if (goright && !noright) return SMoveDir.Right;
-            if (goup && !noup) return SMoveDir.Up;
-            if (godown && !nodown) return SMoveDir.Down;
-            return SMoveDir.None;
-        }
-
-        //// 🔼🔼🔼 여기 추가 끝 🔼🔼🔼
-
-        private void Form1_KeyUp(object sender, KeyEventArgs e)
-        {
-            // 떼어진 키만 false로
-            if (e.KeyCode == Keys.Left) goleft = false;
-            if (e.KeyCode == Keys.Right) goright = false;
-            if (e.KeyCode == Keys.Up) goup = false;
-            if (e.KeyCode == Keys.Down) godown = false;
-
-            // 아직 눌린 다른 방향이 있으면 그쪽으로 즉시 전환 (None으로 잠깐 멈추지 않음)
-            var dir = ComputeHeldDir();      // 타입: SMoveDir
-            _client?.SetCurrentDir(dir);
-        }
-
-
-
-
-
-        private void GameTimerEvent(object sender, EventArgs e)
-        {
-            // 서버 권위일 때는 클라 쪽 물리/충돌/코인/유령 판정 전부 스킵
-            if (_serverAuthoritative)
-            {
-                // (그림은 OnSnapshot -> UpdatePlayersFromSnapshot에서만 수행)
-                return;
-            }
-
-            noleft = noright = noup = nodown = false;
-
-            // 이동 (클라 물리)
-            PlayerMovements();
-
-            // ★ 클라에서 벽충돌/코인수집 항상 수행 (서버 완성 전 임시)
-            foreach (Control wall in walls)
-                CheckBoundaries(pacman, wall);
-
-            foreach (var coin in coins)
-            {
-                if (!coin.Visible) continue;
-                CollectingCoins(pacman, coin);
-            }
-
-            // 유령 이동/충돌
-            var pacDir = GetPacDir();
-            if (!isRoundTransition)
-            {
-                foreach (var g in ghosts)
+                    BackColor = teal,
+                    Size = new Size(tile, tile),
+                    Location = new Point(x, panelBoard.Top - margin - tile)
+                };
+                var bottom = new Panel
                 {
-                    g.GhostMovement(pacman, walls, (MoveDir)pacDir);
-                    var parentSize = (g.image.Parent ?? this).ClientSize;
-                    ClampInto(parentSize, g.image);
-
-                    // ★ 게임오버 판정도 클라에서 수행 (임시)
-                    GhostCollision(pacman, g.image);
-                }
+                    BackColor = teal,
+                    Size = new Size(tile, tile),
+                    Location = new Point(x, panelBoard.Bottom + margin)
+                };
+                this.Controls.Add(top); top.SendToBack();
+                this.Controls.Add(bottom); bottom.SendToBack();
             }
 
-            // 🔕 서버 좌표 강제보정 코드는 주석 유지
-            // if (_serverAuthoritative && _lastSnapshot != null)
-            //     pacman.Location = new Point(_lastSnapshot.X, _lastSnapshot.Y);
-        }
+            // 좌/우
+            int usableH = panelBoard.Height + (tile + gap) - 1;
+            int countSide = Math.Max(1, usableH / (tile + gap));
+            int startY = panelBoard.Top - ((countSide * (tile + gap) - panelBoard.Height) / 2);
 
-
-
-
-        // 시작버튼 누르면 => 라운드 1시작!
-        private void StartButtonClick(object sender, EventArgs e)
-        {
-            // 메뉴 숨기기
-            panelMenu.Enabled = false;
-            panelMenu.Visible = false;
-
-            // 서버 권위 스프라이트 싹 정리 (서버 모드일 때 기존 잔상 제거)
-            if (_serverAuthoritative) ClearPlayerSprites();
-
-            // 입력/상태 초기화
-            goleft = goright = goup = godown = false;
-            noleft = noright = noup = nodown = false;
-
-            // 스코어/라운드 초기화
-            score = 0;
-            round = 1;
-
-            // 폼이 키 이벤트를 먼저 받도록
-            this.KeyPreview = true;
-            // 포커스 강제 (간혹 패널/버튼이 키 입력을 먹는 문제 방지)
-            this.ActiveControl = null;
-            this.Focus();
-
-            // 다음 라운드 세팅
-            NextRound();
-
-            // 게임 타이머 시작
-            GameTimer.Start();
-        }
-
-
-
-        private void NextRound()
-        {
-            isRoundTransition = true;
-
-            // 이동/막힘 플래그 리셋
-            goleft = goright = goup = godown = false;
-            noleft = noright = noup = nodown = false;
-
-            pacman.Location = pacmanStart;
-
-            // 👇 추가: 팩맨 방향 초기화
-            pacman.Image = Properties.Resources.pacman_right;
-
-            ShowCoins();
-            UpdateScoreUI();
-            ShowCenterPopup($"Round {round} Start!");
-        }
-
-
-
-
-        private void SetUp()
-        {
-            // 이미 고스트가 생성되어 있다면 다시 만들지 않음
-            if (ghosts.Count > 0)
-                return;
-
-            // 모든 하위 컨트롤(패널 내부까지) 싹 긁어오기
-            var all = GetAllChildren(this).ToList();
-
-            walls = all.Where(c =>
-                string.Equals(c.Tag as string, "wall", StringComparison.OrdinalIgnoreCase)
-            ).ToList();
-
-            coins = all.OfType<PictureBox>().Where(pb =>
-                string.Equals(pb.Tag as string, "coin", StringComparison.OrdinalIgnoreCase)
-            ).ToList();
-
-            // 필요시 일시 확인
-            // this.Text = $"walls:{walls.Count} coins:{coins.Count}";
-
-            // pacman과 같은 컨테이너(Parent)를 기준으로 생성
-
-            // pacman과 같은 컨테이너
-            var canvas = pacman.Parent ?? this;
-
-            // 배치 파라미터
-            int w = 50, h = 50;
-            int mx = 120, my = 120;
-
-            // 👻 고스트 생성 + 고유 패턴 지정
-            red = new Ghost(canvas, Properties.Resources.red, mx, my, GhostAI.Chase);       // 레드: 추적
-            ghosts.Add(red);
-
-            blue = new Ghost(canvas, Properties.Resources.blue, canvas.ClientSize.Width - mx - w, my, GhostAI.Random);     // 블루: 랜덤
-            ghosts.Add(blue);
-
-            yellow = new Ghost(canvas, Properties.Resources.yellow, mx, canvas.ClientSize.Height - my - h, GhostAI.AvoidWalls); // 옐로: 벽회피
-            ghosts.Add(yellow);
-
-            pink = new Ghost(canvas, Properties.Resources.pink,
-                canvas.ClientSize.Width - mx - w - 80,
-                canvas.ClientSize.Height - my - h - 80,
-                GhostAI.Predict);
-            ghosts.Add(pink);
-
-            // 👇 여기에 추가
-            ghostStartPositions = ghosts.Select(g => g.image.Location).ToList();
-
-
-
-            // 안전: 화면 안으로 보정 + 맨 앞으로
-            var bounds = canvas.ClientSize;
-            foreach (var g in ghosts)
+            for (int i = 0; i < countSide; i++)
             {
-                ClampInto(bounds, g.image);
-                g.image.BringToFront();
+                int y = startY + i * (tile + gap);
+                var left = new Panel
+                {
+                    BackColor = teal,
+                    Size = new Size(tile, tile),
+                    Location = new Point(panelBoard.Left - margin - tile, y)
+                };
+                var right = new Panel
+                {
+                    BackColor = teal,
+                    Size = new Size(tile, tile),
+                    Location = new Point(panelBoard.Right + margin, y)
+                };
+                this.Controls.Add(left); left.SendToBack();
+                this.Controls.Add(right); right.SendToBack();
             }
         }
 
-        // 화면 밖으로 나가지 않도록 강제로 위치 보정하는 함수
-        private void ClampInto(Size cs, Control c)
+        // ====== 정돈된 코인 레이아웃 ======
+        // 테두리는 유지, 내부는 작은 사각형 4개(윗쪽 2, 아랫쪽 2)만 배치
+        private void BuildCleanCoinLayout()
         {
-            if (c.Left < 0) c.Left = 0;
-            if (c.Top < 0) c.Top = 0;
-            if (c.Right > cs.Width) c.Left = cs.Width - c.Width;
-            if (c.Bottom > cs.Height) c.Top = cs.Height - c.Height;
-        }
-
-
-        private void panelMenu_Paint(object sender, PaintEventArgs e)
-        {
-
-        }
-
-        private void PlayerMovements()
-        {
-            if (isRoundTransition) return;        // 라운드 전환 중 이동 멈춤
-            if (_serverAuthoritative) return;     // 서버 권위면 로컬 이동 금지 (지금은 false라 통과)
-
-            // === 실제 로컬 이동 ===
-            if (goleft && !noleft) pacman.Left -= speed;
-            if (goright && !noright) pacman.Left += speed;
-            if (goup && !noup) pacman.Top -= speed;
-            if (godown && !nodown) pacman.Top += speed;
-
-            // (선택) 화면 워프 이동 유지하고 싶으면 주석 해제
-            // if (pacman.Left < -30)                      pacman.Left = this.ClientSize.Width - pacman.Width;
-            // if (pacman.Left + pacman.Width > this.ClientSize.Width) pacman.Left = -10;
-            // if (pacman.Top < -30)                       pacman.Top = this.ClientSize.Height - pacman.Height;
-            // if (pacman.Top + pacman.Height > this.ClientSize.Height) pacman.Top = -10;
-
-            ScreenWrap();   // ✅ 이 한 줄 추가
-        }
-
-
-        // 화면 밖으로 나가면 반대편에서 나오게 하는 전역 래핑
-        private void ScreenWrap()
-        {
-            var canvas = pacman.Parent ?? this;
-            int W = canvas.ClientSize.Width;
-            int H = canvas.ClientSize.Height;
-
-            // 수평 래핑
-            if (pacman.Right < 0)
-                pacman.Left = W - 1;
-            else if (pacman.Left > W)
-                pacman.Left = -pacman.Width + 1;
-
-            // 수직 래핑이 필요하면 켜고, 아니면 아래 두 줄은 지워도 됨
-            if (pacman.Bottom < 0)
-                pacman.Top = H - 1;
-            else if (pacman.Top > H)
-                pacman.Top = -pacman.Height + 1;
-        }
-
-
-
-        private void ShowCoins()
-        {
+            // 기존 코인 정리
             foreach (var c in coins)
             {
-                c.Visible = true;
-                // 필요하면 위치 리셋도 여기서 가능
-                // c.Location = new Point(c.Location.X, c.Location.Y);
+                if (c != null && !c.IsDisposed) panelBoard.Controls.Remove(c);
+                c?.Dispose();
+            }
+            coins.Clear();
+            coinPoints.Clear();
+
+            var coinSize = new Size(20, 20);
+            int step = 30;          // 테두리 기본 간격
+            int margin = 26;        // 바깥 테두리 여백
+
+            // 1) 바깥 테두리(그대로 유지)
+            PlaceBorderCoins(margin, step, coinSize);
+
+            // 2) 내부 작은 사각형 4개 (대칭)
+            //    각 블록은 4x4 그리드, 블록 크기 약 100x100, 위치는 상/하 좌우 대칭
+            int blockW = 100, blockH = 100;
+            int topY = 150;
+            int bottomY = panelBoard.Height - 150 - blockH;
+            int leftX = 140;
+            int rightX = panelBoard.Width - 140 - blockW;
+
+            var rTopLeft = new Rectangle(leftX, topY, blockW, blockH);
+            var rTopRight = new Rectangle(rightX, topY, blockW, blockH);
+            var rBotLeft = new Rectangle(leftX, bottomY, blockW, blockH);
+            var rBotRight = new Rectangle(rightX, bottomY, blockW, blockH);
+
+            AddGridInRect(rTopLeft, 4, 4, coinSize);
+            AddGridInRect(rTopRight, 4, 4, coinSize);
+            AddGridInRect(rBotLeft, 4, 4, coinSize);
+            AddGridInRect(rBotRight, 4, 4, coinSize);
+
+            // ※ 중앙, 고스트 주변, 링/통로 등은 더 이상 배치하지 않음.
+        }
+
+        // ---- 보조: 테두리/그리드 ----
+        private void PlaceBorderCoins(int margin, int step, Size coinSz)
+        {
+            Image img = LoadImage("coin.png", false);
+
+            for (int x = margin; x <= panelBoard.Width - margin - coinSz.Width; x += step)
+            {
+                AddCoin(new Point(x, margin), coinSz, img);
+                AddCoin(new Point(x, panelBoard.Height - margin - coinSz.Height), coinSz, img);
+            }
+            for (int y = margin + step; y <= panelBoard.Height - margin - coinSz.Height - step; y += step)
+            {
+                AddCoin(new Point(margin, y), coinSz, img);
+                AddCoin(new Point(panelBoard.Width - margin - coinSz.Width, y), coinSz, img);
             }
         }
 
-        private void CheckBoundaries(PictureBox pacman, Control wall)
+        private void AddGridInRect(Rectangle r, int cols, int rows, Size coinSz)
         {
-            if (!pacman.Bounds.IntersectsWith(wall.Bounds))
-                return;
+            if (cols < 1 || rows < 1) return;
 
-            // 왼쪽으로 이동 중 → 벽의 오른쪽에 딱 붙여서 멈춤
-            if (goleft)
-            {
-                noleft = true;
-                goleft = false;
-                pacman.Left = wall.Right + 2;
-            }
+            // 간격은 정사각 블록 기준으로 균등 분배
+            float gapX = (r.Width - coinSz.Width) / (float)(cols - 1);
+            float gapY = (r.Height - coinSz.Height) / (float)(rows - 1);
+            Image img = LoadImage("coin.png", false);
 
-            // 오른쪽으로 이동 중 → 벽의 왼쪽에 딱 붙여서 멈춤
-            if (goright)
-            {
-                noright = true;
-                goright = false;
-                pacman.Left = wall.Left - pacman.Width - 2;
-            }
-
-            // ↑ 여기까지가 가로 충돌 
-
-            // ↓ 여기부터 세로 충돌을 추가
-
-            // 위로 이동 중 → 벽의 아래쪽에 딱 붙여서 멈춤
-            if (goup)
-            {
-                noup = true;
-                goup = false;
-                pacman.Top = wall.Bottom + 2;
-            }
-
-            // 아래로 이동 중 → 벽의 위쪽에 딱 붙여서 멈춤
-            if (godown)
-            {
-                nodown = true;
-                godown = false;
-                pacman.Top = wall.Top - pacman.Height - 2;
-            }
-        }
-
-
-
-        private void CollectingCoins(PictureBox pacman, PictureBox coin)
-        {
-            if (!coin.Visible || isRoundTransition) return;
-
-            if (pacman.Bounds.IntersectsWith(coin.Bounds))
-            {
-                coin.Visible = false;
-                score += 10;
-                UpdateScoreUI();
-
-                if (coins.All(c => !c.Visible))
+            for (int row = 0; row < rows; row++)
+                for (int col = 0; col < cols; col++)
                 {
-                    isRoundTransition = true;
-                    int bonus = 100 + (round - 1) * 50;
-                    score += bonus;
-                    UpdateScoreUI();
+                    int x = (int)Math.Round(r.Left + col * gapX);
+                    int y = (int)Math.Round(r.Top + row * gapY);
+                    AddCoin(new Point(x, y), coinSz, img);
+                }
+        }
 
-                    ShowCenterPopup($"똬잇! Round {round} Clear!  +{bonus}");
-                    round += 1;
+        // 코인 추가(중복 방지 + 골드 코인 보장)
+        private void AddCoin(Point location, Size size, Image img)
+        {
+            if (coinPoints.Contains(location)) return; // 중복 좌표 스킵
+            coinPoints.Add(location);
 
-                    this.BeginInvoke(new Action(() =>
+            // 파일이 없거나 투명 fallback이면 코드로 그린 골드 코인 사용
+            if (img == null || IsFallback(img))
+                img = DrawCoinBitmap(size.Width, size.Height);
+
+            var pb = new PictureBox
+            {
+                Size = size,
+                Location = location,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.Transparent,
+                Image = img
+            };
+            coins.Add(pb);
+            panelBoard.Controls.Add(pb);
+            pb.BringToFront(); // 보드 위에서 항상 보이도록
+        }
+
+        // --- 고스트(이미지 우선, 없으면 표정 포함 드로잉) ---
+        private PictureBox MakeGhost(string name, Color bodyColor, GhostEye eyes)
+        {
+            // 파일 있으면 우선 사용
+            string fn = "";
+            if (bodyColor == Color.IndianRed) fn = "ghost_red.png";
+            if (bodyColor == Color.DeepSkyBlue) fn = "ghost_blue.png";
+            if (bodyColor == Color.Orange) fn = "ghost_orange.png";
+            if (bodyColor == Color.HotPink) fn = "ghost_pink.png";
+
+            Image img = LoadImage(fn, false);
+            if (IsFallback(img)) // 파일 없으면 코드 드로잉
+                img = DrawGhostBitmap(bodyColor, eyes, 40, 40);
+
+            return new PictureBox
+            {
+                Name = name,
+                Size = new Size(40, 40),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.Transparent,
+                Image = img
+            };
+        }
+
+        private Image DrawGhostBitmap(Color body, GhostEye eyes, int w, int h)
+        {
+            Bitmap bmp = new Bitmap(w, h);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.Clear(Color.Transparent);
+
+                // 몸통(상단 반원 + 하단 물결)
+                using (var br = new SolidBrush(body))
+                {
+                    Rectangle head = new Rectangle(3, 3, w - 6, h - 8);
+                    g.FillEllipse(br, new Rectangle(head.X, head.Y, head.Width, head.Height - 10));
+                    g.FillRectangle(br, new Rectangle(head.X, head.Y + (head.Height - 18), head.Width, 18));
+                    int scallop = 6;
+                    for (int i = 0; i < 4; i++)
                     {
-                        NextRound();
-                    }));
+                        int sx = head.X + 3 + i * 8;
+                        int sy = head.Bottom - 6;
+                        g.FillEllipse(br, new Rectangle(sx, sy - 3, scallop, scallop));
+                    }
+                }
+
+                // 눈(흰자 + 동공)
+                using (var white = new SolidBrush(Color.White))
+                using (var black = new SolidBrush(Color.Black))
+                {
+                    Rectangle l = new Rectangle(12, 14, 10, 12);
+                    Rectangle r = new Rectangle(22, 14, 10, 12);
+                    g.FillEllipse(white, l);
+                    g.FillEllipse(white, r);
+
+                    Point off = new Point(0, 0);
+                    if (eyes == GhostEye.Left) off = new Point(-2, 2);
+                    if (eyes == GhostEye.Right) off = new Point(2, 2);
+                    if (eyes == GhostEye.Up) off = new Point(0, -1);
+                    if (eyes == GhostEye.Down) off = new Point(0, 3);
+
+                    g.FillEllipse(black, new Rectangle(l.X + 4 + off.X, l.Y + 5 + off.Y, 4, 5));
+                    g.FillEllipse(black, new Rectangle(r.X + 4 + off.X, r.Y + 5 + off.Y, 4, 5));
                 }
             }
+            return bmp;
         }
 
-
-        private void GhostCollision(PictureBox pacman, PictureBox ghost)
+        // -----------------------------
+        // 이미지 로드 & 보조
+        // -----------------------------
+        private Image LoadImage(string fileName, bool fallbackPacman)
         {
-            // 서로 다른 컨테이너여도 안전한 충돌 판정
-            Rectangle AbsBounds(Control c) => c.RectangleToScreen(c.Bounds);
-
-            if (AbsBounds(pacman).IntersectsWith(AbsBounds(ghost)))
+            try
             {
-                GameTimer.Stop();
-                ShowGameOverOverlay();
+                if (!string.IsNullOrEmpty(fileName))
+                {
+                    string p1 = Path.Combine(assetDir, fileName);
+                    if (File.Exists(p1)) return Image.FromFile(p1);
+
+                    string p2 = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, fileName);
+                    if (File.Exists(p2)) return Image.FromFile(p2);
+                }
             }
-        }
+            catch { /* ignore */ }
 
-
-
-        private void GameOver()
-        {
-            GameTimer.Stop();
-            MessageBox.Show("CLEAR! Score: " + score, "Pacman");
-            panelMenu.Enabled = true;
-            panelMenu.Visible = true;
-        }
-
-        private static IEnumerable<Control> GetAllChildren(Control root)
-        {
-            foreach (Control child in root.Controls)
+            // 파일이 없을 때
+            if (fallbackPacman)
             {
-                yield return child;
-                foreach (var grand in GetAllChildren(child))
-                    yield return grand;
+                // 기본 첫 프레임(오른쪽, 입 열린 상태)
+                return DrawPacmanFrame(true, Dir.Right);
             }
+
+            // 1x1 투명 (fallback 표식)
+            Bitmap empty = new Bitmap(1, 1);
+            using (Graphics g = Graphics.FromImage(empty)) { g.Clear(Color.Transparent); }
+            return empty;
         }
+
+        private bool IsFallback(Image img) => img != null && img.Width == 1 && img.Height == 1;
     }
 }
