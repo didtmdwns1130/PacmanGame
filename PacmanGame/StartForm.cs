@@ -2,6 +2,7 @@
 using System.Drawing;
 using System.Windows.Forms;
 using System.Threading.Tasks;   // + 비동기 연결용
+// using PacmanGame;  // ← 불필요, 제거
 
 namespace PacmanGame
 {
@@ -116,14 +117,13 @@ namespace PacmanGame
             var client = new GameClient();
 
             // 2) GameForm를 먼저 생성/표시해서(= 생성자에서 이벤트 구독 끝난 상태) 렌더 준비
-            var game = new GameForm(nickname, serverIp, client);
+            var game = new PacmanGame.GameForm(nickname, serverIp, client); // ★ 완전 수식
             game.FormClosed += (s, _) =>
             {
                 try { client.Dispose(); } catch { }
                 this.Close();  // 게임창 닫히면 앱 종료
                                // 또는 Application.Exit(); 를 써도 됨
             };
-
 
             this.Hide();
             game.Show();   // ★ Show가 먼저!
@@ -134,7 +134,6 @@ namespace PacmanGame
                 // StartAsync가 없으므로 Connect를 백그라운드에서 실행
                 await Task.Run(() => client.Connect(serverIp, 9000, nickname));
             }
-
             catch (Exception ex)
             {
                 // 연결 실패 시 롤백 처리
@@ -146,6 +145,5 @@ namespace PacmanGame
                 try { client.Dispose(); } catch { }
             }
         }
-
     }
 }

@@ -23,6 +23,18 @@ namespace Shared
         public Dir Dir;
         public int ColorIndex;
         public string Nick; // 표시용(선택)
+
+        // ★ 추가: 서버 권위 점수
+        public int Score;
+    }
+
+    // ★ 추가: 서버가 관리하는 코인 하나의 상태
+    public struct CoinState
+    {
+        public int Id;     // 고유 ID(0..N-1)
+        public int X;      // 좌상단 픽셀 좌표
+        public int Y;
+        public bool Eaten; // 먹혔는지 여부
     }
 
     // -------- 메시지 --------
@@ -53,6 +65,10 @@ namespace Shared
         public MsgType Type => MsgType.SNAPSHOT;
         public int Tick;
         public List<PlayerState> Players;
+
+        // ★ 추가: 전체 코인 상태(간단하게 매 틱 전체 보냄)
+        public List<CoinState> Coins;
+        public int Round; // ★ 현재 라운드
     }
 
     // -------- 직렬화 유틸(길이 프레임 + 바이너리) --------
@@ -94,11 +110,13 @@ namespace Shared
                         {
                             var m = (SnapshotMsg)msg;
                             bw.Write(m.Tick);
-                            int count = m.Players == null ? 0 : m.Players.Count;
-                            bw.Write(count);
-                            if (count > 0)
+
+                            // Players
+                            int pCount = m.Players == null ? 0 : m.Players.Count;
+                            bw.Write(pCount);
+                            if (pCount > 0)
                             {
-                                for (int i = 0; i < count; i++)
+                                for (int i = 0; i < pCount; i++)
                                 {
                                     var p = m.Players[i];
                                     bw.Write(p.Id);
@@ -106,7 +124,23 @@ namespace Shared
                                     bw.Write(p.Y);
                                     bw.Write((int)p.Dir);
                                     bw.Write(p.ColorIndex);
+                                    bw.Write(p.Score);         // ★ 추가된 필드
                                     bw.Write(p.Nick ?? "");
+                                }
+                            }
+
+                            // Coins
+                            int cCount = m.Coins == null ? 0 : m.Coins.Count;
+                            bw.Write(cCount);
+                            if (cCount > 0)
+                            {
+                                for (int i = 0; i < cCount; i++)
+                                {
+                                    var c = m.Coins[i];
+                                    bw.Write(c.Id);
+                                    bw.Write(c.X);
+                                    bw.Write(c.Y);
+                                    bw.Write(c.Eaten);
                                 }
                             }
                             break;
@@ -168,9 +202,11 @@ namespace Shared
                     case MsgType.SNAPSHOT:
                         {
                             int tick = br.ReadInt32();
-                            int count = br.ReadInt32();
-                            var list = new List<PlayerState>(count);
-                            for (int i = 0; i < count; i++)
+
+                            // Players
+                            int pCount = br.ReadInt32();
+                            var players = new List<PlayerState>(pCount);
+                            for (int i = 0; i < pCount; i++)
                             {
                                 PlayerState p;
                                 p.Id = br.ReadInt32();
@@ -178,10 +214,30 @@ namespace Shared
                                 p.Y = br.ReadSingle();
                                 p.Dir = (Dir)br.ReadInt32();
                                 p.ColorIndex = br.ReadInt32();
+                                p.Score = br.ReadInt32();   // ★ 추가된 필드 읽기
                                 p.Nick = br.ReadString();
-                                list.Add(p);
+                                players.Add(p);
                             }
-                            return new SnapshotMsg { Tick = tick, Players = list };
+
+                            // Coins
+                            int cCount = br.ReadInt32();
+                            var coins = new List<CoinState>(cCount);
+                            for (int i = 0; i < cCount; i++)
+                            {
+                                CoinState c;
+                                c.Id = br.ReadInt32();
+                                c.X = br.ReadInt32();
+                                c.Y = br.ReadInt32();
+                                c.Eaten = br.ReadBoolean();
+                                coins.Add(c);
+                            }
+
+                            return new SnapshotMsg
+                            {
+                                Tick = tick,
+                                Players = players,
+                                Coins = coins
+                            };
                         }
                     default:
                         return null;
