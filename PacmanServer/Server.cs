@@ -29,10 +29,6 @@ namespace PacmanServer
         private const int MAP_H = 600;
         private const int SPRITE = 44;
 
-        // (A) 속도: 라운드 보너스 기반
-        private const int BASE_SPEED = 10; // ★ 기본 속도(체감 ↑)
-        private const int MAX_BONUS = 4;  // ★ 라운드 가산 최대치
-
         private const int TICK_MS = 33;    // ~30fps
         private int _tick;
 
@@ -255,8 +251,9 @@ namespace PacmanServer
 
                     int dx = 0, dy = 0;
 
-                    // (B) 라운드 보너스 포함 속도 계산
-                    int speed = BASE_SPEED + Math.Min(_round - 1, MAX_BONUS); // ★ 라운드 보너스
+                    // ★ 라운드 기반 가속 (R1:8, R2:10, R3:12, R4:14, R5+:16)
+                    int speed = 8 + Math.Min(4, Math.Max(0, _round - 1)) * 2;
+
                     if (d == Dir.Left) dx = -speed;
                     else if (d == Dir.Right) dx = +speed;
                     else if (d == Dir.Up) dy = -speed;
@@ -291,7 +288,7 @@ namespace PacmanServer
 
                 _tick++;
 
-                // (D) 라운드 완료 체크: 코인 모두 먹혔으면 다음 라운드, 코인 원복
+                // ★ 라운드 완료 체크: 코인 모두 먹혔으면 다음 라운드, 코인 원복
                 bool allEaten = true;
                 for (int i = 0; i < _coins.Count; i++)
                 {
@@ -338,10 +335,11 @@ namespace PacmanServer
             {
                 snap = new SnapshotMsg
                 {
-                    Tick = (_round << 20) | (_tick & 0xFFFFF),  // 상위 12비트(또는 20비트)에 라운드, 하위는 틱
+                    // 상위 20비트에 라운드, 하위 20비트에 틱(클라 ROUND_SHIFT=20 가정)
+                    Tick = (_round << 20) | (_tick & 0xFFFFF),
                     Players = new List<PlayerState>(_players.Values),
                     Coins = new List<CoinState>(_coins),
-                    Round = _round, // (C) 현재 라운드도 전송
+                    Round = _round, // (C) 현재 라운드도 전송(호환용)
                 };
                 clients = new List<TcpClient>(_clients.Values);
             }

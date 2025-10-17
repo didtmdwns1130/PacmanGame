@@ -356,6 +356,8 @@ namespace PacmanGame
                     _playerSprites.Remove(id);
                 }
 
+                if (panelStart != null) panelStart.BringToFront();  // ★ 시작 오버레이 항상 최상단으로
+
                 // ★ 코인 렌더(서버 권위)
                 if (s.Coins != null && s.Coins.Count > 0)
                 {
