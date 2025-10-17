@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Linq;            // (선택)
 using System.Windows.Forms;
 using Shared; // WelcomeMsg, SnapshotMsg, GhostState, CoinState
 using MoveDir = Shared.Dir;   // 로컬 Dir → 네트워크 MoveDir 별칭
@@ -189,7 +190,6 @@ namespace PacmanGame
                 BackColor = Color.Transparent
             };
             panelStart.Controls.Add(_menuPacman);
-            _menuPacman.BringToFront();
 
             // 중앙 타이틀
             lblCenterTitle = new Label
@@ -222,7 +222,8 @@ namespace PacmanGame
             };
             lblPlay.Click += StartOverlay_Click;
             panelStart.Controls.Add(lblPlay);
-            lblPlay.BringToFront();
+            lblPlay.BringToFront();                       // ★ 버튼을 최상단
+            panelStart.Controls.SetChildIndex(lblPlay, 0); // ★ 확실히 맨 위에 고정
 
             // 도움말
             lblHelp = new Label
@@ -321,9 +322,6 @@ namespace PacmanGame
         {
             if (IsDisposed) return;
 
-            const int ROUND_SHIFT = 20;
-            int round = s.Tick >> ROUND_SHIFT;
-
             int count = 0;
             if (s.Players != null)
                 foreach (var ps in s.Players) if (ps.Id > 0) count++;
@@ -364,14 +362,11 @@ namespace PacmanGame
 
                         if (!panelGameOver.Visible) sprite.BringToFront();
                         alive.Add(ps.Id);
-
-                        if (ps.Id == _myId)
-                        {
-                            _score = ps.Score;
-                            lblScore.Text = $"SCORE: {_score}  (R:{round})";
-                        }
                     }
                 }
+
+                // ★ HUD 점수/라운드: 서버 스냅샷으로 1줄 갱신
+                UpdateScoreAndRoundHUD(s);
 
                 // 스냅샷에 없는 플레이어 제거
                 var toRemove = new List<int>();
@@ -436,7 +431,7 @@ namespace PacmanGame
                 if (s.GameOver && !_isGameOver)
                 {
                     _isGameOver = true;
-                    ShowGameOver(round);
+                    ShowGameOver(s.Round);
                 }
                 else if (!s.GameOver && _isGameOver)
                 {
@@ -448,6 +443,28 @@ namespace PacmanGame
             if (InvokeRequired) BeginInvoke(ui); else ui();
             if (InvokeRequired) BeginInvoke((Action)(() => AfterSpritesUpdatedKeepOverlayOnTop()));
             else AfterSpritesUpdatedKeepOverlayOnTop();
+        }
+
+        // -----------------------------
+        // 스냅샷 기반 HUD 갱신(점수 + 라운드)
+        // -----------------------------
+        private void UpdateScoreAndRoundHUD(Shared.SnapshotMsg s)
+        {
+            if (s.Players == null) return;
+
+            // ★ Welcome 미수신 상황 대비: 임시로 내 ID 추정
+            if (_myId < 0 && s.Players.Count > 0)
+                _myId = s.Players[0].Id;
+
+            Shared.PlayerState me = default;
+            bool found = false;
+            foreach (var p in s.Players)
+                if (p.Id == _myId) { me = p; found = true; break; }
+            if (!found) return;
+
+            _score = me.Score;
+            int round = s.Round != 0 ? s.Round : (s.Tick >> 20);
+            lblScore.Text = $"SCORE: {_score}  (R:{round})";
         }
 
         private void ShowGameOver(int round)
@@ -520,7 +537,6 @@ namespace PacmanGame
 
             _gameStarted = true;
             _sentFirstInput = false;
-            // 애니메이션 타이머는 계속 동작(캐시 스프라이트 갱신)
         }
 
         private void GameForm_KeyDown(object sender, KeyEventArgs e)
@@ -743,19 +759,19 @@ namespace PacmanGame
             }
         }
 
-        // 시작 오버레이 배치 헬퍼(메뉴 팩맨을 play 버튼 위 12px)
+        // 시작 오버레이 배치 헬퍼(버튼 위쪽에 위치만 조정, Z-Order 불변 + 클릭차단 해제)
         private void AlignMenuPacmanOverPlay()
         {
-            if (panelStart == null || _menuPacman == null || lblPlay == null || lblCenterTitle == null) return;
+            if (panelStart == null || _menuPacman == null || lblPlay == null) return;
 
-            int x = panelStart.Width / 2 - _menuPacman.Width / 2;
-
+            int x = (panelStart.Width - _menuPacman.Width) / 2;
             int y = lblPlay.Top - _menuPacman.Height - 12;
-            int minY = lblCenterTitle.Bottom + 6;
-            if (y < minY) y = minY;
+            if (y < 0) y = 0;
 
             _menuPacman.Location = new Point(x, y);
-            _menuPacman.BringToFront();
+            _menuPacman.Enabled = false; // 버튼 클릭 가로채지 않도록
+            _menuPacman.TabStop = false;
+            // Z-Order는 변경하지 않음: lblPlay가 최상단 유지
         }
 
         // 공용

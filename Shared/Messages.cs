@@ -1,4 +1,4 @@
-﻿// Shared/NetMessages.cs  — C# 7.3
+﻿// Shared/Messages.cs  — C# 7.3
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -15,7 +15,7 @@ namespace Shared
     // -------- 모델 --------
     public enum Dir : int { Right = 0, Left = 1, Up = 2, Down = 3 }
 
-    // ★ 추가: 유령 AI 타입
+    // 유령 AI 타입
     public enum GhostAI : int { Random = 0, Chase = 1, Flee = 2, Patrol = 3 }
 
     public struct PlayerState
@@ -25,13 +25,11 @@ namespace Shared
         public float Y;
         public Dir Dir;
         public int ColorIndex;
+        public int Score;   // [+] 반드시 존재
         public string Nick; // 표시용(선택)
-
-        // ★ 추가: 서버 권위 점수
-        public int Score;
     }
 
-    // ★ 추가: 서버가 관리하는 코인 하나의 상태
+    // 서버가 관리하는 코인 하나의 상태
     public struct CoinState
     {
         public int Id;     // 고유 ID(0..N-1)
@@ -40,7 +38,7 @@ namespace Shared
         public bool Eaten; // 먹혔는지 여부
     }
 
-    // ★ 추가: 유령 상태(음수 Id 사용)
+    // 유령 상태(음수 Id 사용)
     public struct GhostState
     {
         public int Id;     // -1, -2, -3, -4
@@ -65,7 +63,7 @@ namespace Shared
         public int ColorIndex;
     }
 
-    // (다음 단계에서 사용할 예정)
+    // 입력 메시지
     public struct InputMsg : INetMessage
     {
         public MsgType Type => MsgType.INPUT;
@@ -77,18 +75,18 @@ namespace Shared
     {
         public MsgType Type => MsgType.SNAPSHOT;
         public int Tick;
-        public List<PlayerState> Players;
+        public List<PlayerState> Players; // Score 포함
 
-        // ★ 추가: 전체 코인 상태(간단하게 매 틱 전체 보냄)
+        // 전체 코인 상태
         public List<CoinState> Coins;
-        public int Round; // ★ 현재 라운드
+        public int Round; // 현재 라운드
 
-        // ★ 추가: 유령/게임오버
+        // 유령/게임오버
         public List<GhostState> Ghosts; // 없으면 0
         public bool GameOver;
     }
 
-    // ★ 추가: 다시 시작 요청
+    // 다시 시작 요청
     public struct RestartMsg : INetMessage
     {
         public MsgType Type => MsgType.RESTART;
@@ -132,34 +130,31 @@ namespace Shared
                     case MsgType.SNAPSHOT:
                         {
                             var m = (SnapshotMsg)msg;
+                            // --- SNAPSHOT WRITE (서버) ---
                             bw.Write(m.Tick);
 
-                            // Players
-                            int pCount = m.Players == null ? 0 : m.Players.Count;
-                            bw.Write(pCount);
-                            if (pCount > 0)
+                            // Players (ColorIndex → Score → Nick)
+                            bw.Write(m.Players?.Count ?? 0);
+                            if (m.Players != null)
                             {
-                                for (int i = 0; i < pCount; i++)
+                                foreach (var p in m.Players)
                                 {
-                                    var p = m.Players[i];
                                     bw.Write(p.Id);
                                     bw.Write(p.X);
                                     bw.Write(p.Y);
                                     bw.Write((int)p.Dir);
                                     bw.Write(p.ColorIndex);
-                                    bw.Write(p.Score);         // ★ 추가된 필드
+                                    bw.Write(p.Score);        // ★ Score를 Nick보다 먼저!
                                     bw.Write(p.Nick ?? "");
                                 }
                             }
 
                             // Coins
-                            int cCount = m.Coins == null ? 0 : m.Coins.Count;
-                            bw.Write(cCount);
-                            if (cCount > 0)
+                            bw.Write(m.Coins?.Count ?? 0);
+                            if (m.Coins != null)
                             {
-                                for (int i = 0; i < cCount; i++)
+                                foreach (var c in m.Coins)
                                 {
-                                    var c = m.Coins[i];
                                     bw.Write(c.Id);
                                     bw.Write(c.X);
                                     bw.Write(c.Y);
@@ -167,17 +162,12 @@ namespace Shared
                                 }
                             }
 
-                            // Round
-                            bw.Write(m.Round);
-
-                            // ★ 추가: Ghosts
-                            int gCount = m.Ghosts == null ? 0 : m.Ghosts.Count;
-                            bw.Write(gCount);
-                            if (gCount > 0)
+                            // Ghosts
+                            bw.Write(m.Ghosts?.Count ?? 0);
+                            if (m.Ghosts != null)
                             {
-                                for (int i = 0; i < gCount; i++)
+                                foreach (var g in m.Ghosts)
                                 {
-                                    var g = m.Ghosts[i];
                                     bw.Write(g.Id);
                                     bw.Write(g.X);
                                     bw.Write(g.Y);
@@ -186,7 +176,8 @@ namespace Shared
                                 }
                             }
 
-                            // ★ 추가: GameOver
+                            // 마지막: Round, GameOver
+                            bw.Write(m.Round);     // ★ 반드시 전송
                             bw.Write(m.GameOver);
                             break;
                         }
@@ -226,71 +217,69 @@ namespace Shared
                 switch (type)
                 {
                     case MsgType.JOIN:
+                        return new JoinMsg
                         {
-                            return new JoinMsg
-                            {
-                                Nickname = br.ReadString(),
-                                ClientVersion = br.ReadString()
-                            };
-                        }
+                            Nickname = br.ReadString(),
+                            ClientVersion = br.ReadString()
+                        };
+
                     case MsgType.WELCOME:
+                        return new WelcomeMsg
                         {
-                            return new WelcomeMsg
-                            {
-                                YourId = br.ReadInt32(),
-                                ColorIndex = br.ReadInt32()
-                            };
-                        }
+                            YourId = br.ReadInt32(),
+                            ColorIndex = br.ReadInt32()
+                        };
+
                     case MsgType.INPUT:
+                        return new InputMsg
                         {
-                            return new InputMsg
-                            {
-                                Dir = (Dir)br.ReadInt32(),
-                                IsPressed = br.ReadBoolean()
-                            };
-                        }
+                            Dir = (Dir)br.ReadInt32(),
+                            IsPressed = br.ReadBoolean()
+                        };
+
                     case MsgType.SNAPSHOT:
                         {
-                            int tick = br.ReadInt32();
+                            // --- SNAPSHOT READ (클라) ---
+                            var m = new SnapshotMsg();
+                            m.Tick = br.ReadInt32();
 
                             // Players
-                            int pCount = br.ReadInt32();
-                            var players = new List<PlayerState>(pCount);
-                            for (int i = 0; i < pCount; i++)
+                            int pc = br.ReadInt32();
+                            var players = new List<PlayerState>(pc);
+                            for (int i = 0; i < pc; i++)
                             {
-                                PlayerState p;
+                                PlayerState p = default;
                                 p.Id = br.ReadInt32();
                                 p.X = br.ReadSingle();
                                 p.Y = br.ReadSingle();
                                 p.Dir = (Dir)br.ReadInt32();
                                 p.ColorIndex = br.ReadInt32();
-                                p.Score = br.ReadInt32();   // ★ 추가된 필드 읽기
+                                p.Score = br.ReadInt32();   // ★ 쓰기와 같은 위치
                                 p.Nick = br.ReadString();
                                 players.Add(p);
                             }
+                            m.Players = players;
 
                             // Coins
-                            int cCount = br.ReadInt32();
-                            var coins = new List<CoinState>(cCount);
-                            for (int i = 0; i < cCount; i++)
+                            int cc = br.ReadInt32();
+                            var coins = new List<CoinState>(cc);
+                            for (int i = 0; i < cc; i++)
                             {
-                                CoinState c;
+                                CoinState c = default;
                                 c.Id = br.ReadInt32();
                                 c.X = br.ReadInt32();
                                 c.Y = br.ReadInt32();
                                 c.Eaten = br.ReadBoolean();
                                 coins.Add(c);
                             }
+                            m.Coins = coins;
 
-                            // Round
-                            int round = br.ReadInt32();
-
-                            // ★ 추가: Ghosts
-                            int gCount = br.ReadInt32();
-                            var ghosts = new List<GhostState>(gCount);
-                            for (int i = 0; i < gCount; i++)
+                            // Ghosts
+                            int gc = br.ReadInt32();
+                            var ghosts = new List<GhostState>(gc);
+                            for (int i = 0; i < gc; i++)
                             {
-                                GhostState g;
+                                GhostState g = default;
                                 g.Id = br.ReadInt32();
                                 g.X = br.ReadSingle();
                                 g.Y = br.ReadSingle();
@@ -298,25 +287,17 @@ namespace Shared
                                 g.AI = (GhostAI)br.ReadInt32();
                                 ghosts.Add(g);
                             }
+                            m.Ghosts = ghosts;
 
-                            // ★ 추가: GameOver
-                            bool gameOver = br.ReadBoolean();
+                            m.Round = br.ReadInt32();  // ★ 반드시 수신
+                            m.GameOver = br.ReadBoolean();
 
-                            return new SnapshotMsg
-                            {
-                                Tick = tick,
-                                Players = players,
-                                Coins = coins,
-                                Round = round, // (C) 현재 라운드도 전송(호환용)
-                                Ghosts = ghosts,
-                                GameOver = gameOver
-                            };
+                            return m;
                         }
+
                     case MsgType.RESTART:
-                        {
-                            // payload 없음
-                            return new RestartMsg();
-                        }
+                        return new RestartMsg();
+
                     default:
                         return null;
                 }
