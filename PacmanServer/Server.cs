@@ -338,7 +338,7 @@ namespace PacmanServer
             {
                 snap = new SnapshotMsg
                 {
-                    Tick = _tick,
+                    Tick = (_round << 20) | (_tick & 0xFFFFF),  // 상위 12비트(또는 20비트)에 라운드, 하위는 틱
                     Players = new List<PlayerState>(_players.Values),
                     Coins = new List<CoinState>(_coins),
                     Round = _round, // (C) 현재 라운드도 전송

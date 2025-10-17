@@ -273,6 +273,12 @@ namespace PacmanGame
         {
             if (IsDisposed) return;
 
+            // ★ Tick 상위 비트에서 라운드 추출
+            const int ROUND_SHIFT = 20;
+            int round = s.Tick >> ROUND_SHIFT;
+            int tick = s.Tick & ((1 << ROUND_SHIFT) - 1); // 필요하면 사용
+            // s.Tick = tick; // 틱을 이후 로직에서 계속 쓸 거면 주석 해제
+
             // 플레이어 수(양수 ID만)로 표시
             int count = 0;
             if (s.Players != null)
@@ -312,7 +318,7 @@ namespace PacmanGame
                             alive.Add(ps.Id);
                             myFound = true;
                             // ★ 내 점수 HUD 갱신 (오버레이 중에도 최신값 반영)
-                            lblScore.Text = $"SCORE: {ps.Score}  (R:{s.Round})"; // ★ 서버 Round 반영
+                            lblScore.Text = $"SCORE: {ps.Score}  (R:{round})"; // ★ Tick 상위 비트 라운드 사용
                             continue;
                         }
 
@@ -332,7 +338,7 @@ namespace PacmanGame
                         if (ps.Id == _myId)
                         {
                             myFound = true;
-                            lblScore.Text = $"SCORE: {ps.Score}  (R:{s.Round})"; // ★ 라운드 같이
+                            lblScore.Text = $"SCORE: {ps.Score}  (R:{round})"; // ★ Tick 상위 비트 라운드 사용
                         }
                     }
                 }
