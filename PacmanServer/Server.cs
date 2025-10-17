@@ -6,7 +6,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
-using Shared; // NetProto, JoinMsg, WelcomeMsg, InputMsg, SnapshotMsg, PlayerState, Dir, CoinState, GhostState, GhostAI, RestartMsg
+using Shared; // NetProto, JoinMsg, WelcomeMsg, InputMsg, SnapshotMsg, PlayerState, Dir, CoinState, GhostState, GhostAI, RestartMsg, GameConsts
 
 namespace PacmanServer
 {
@@ -35,19 +35,6 @@ namespace PacmanServer
         // ★ 현재 라운드
         private int _round = 1;            // 이미 있으면 중복 선언 금지
 
-        // ★ 4인 하드 제한
-        private const int MAX_PLAYERS = 4;
-
-        // ★ 스폰 포인트: 중앙 + 4코너
-        private readonly (int x, int y)[] _spawns = new (int x, int y)[]
-        {
-            ((MAP_W - SPRITE)/2, (MAP_H - SPRITE)/2),                 // 0: Center
-            (30, 30),                                                 // 1: Top-Left
-            (MAP_W - SPRITE - 30, 30),                                // 2: Top-Right
-            (30, MAP_H - SPRITE - 30),                                // 3: Bottom-Left
-            (MAP_W - SPRITE - 30, MAP_H - SPRITE - 30)                // 4: Bottom-Right
-        };
-
         // ★ 추가: 게임오버/유령
         private bool _gameOver = false;
         private int _graceTicks = 90; // ★ 시작 그레이스(무적) 타임: 약 3초(= 90틱)
@@ -62,7 +49,7 @@ namespace PacmanServer
         private readonly List<CoinState> _coins = new List<CoinState>();
 
         // --- 기존 Run() 호출부 호환용 ---
-        public void Run() => Run(7777);
+        public void Run() => Run(GameConsts.DEFAULT_PORT);   // ★ 공통 포트 사용
         public void Run(int port)
         {
             Start(port);
@@ -110,7 +97,8 @@ namespace PacmanServer
                     continue;
                 }
 
-                _ = HandleClientAsync(tcp);
+                // ★ 클라이언트 처리 작업을 별도 Task로 분리 (동시 접속 정상화)
+                _ = Task.Run(() => HandleClientAsync(tcp));
             }
         }
 
@@ -122,38 +110,20 @@ namespace PacmanServer
             int id;
             var rand = new Random(Environment.TickCount ^ (int)DateTime.UtcNow.Ticks);
 
-            // ★ 하드 제한: 4인 꽉 차면 즉시 거절
-            lock (_lock)
-            {
-                if (_players.Count >= MAX_PLAYERS)
-                {
-                    Console.WriteLine("[SERVER] Reject: room full");
-                    try { tcp.Close(); } catch { }
-                    return;
-                }
-            }
-
-            // 등록 + 스폰 (첫 접속자는 중앙, 이후 코너 순서)
+            // 등록 + 스폰 (항상 정중앙, 정지 상태)
             lock (_lock)
             {
                 id = _nextId++;
                 _clients[id] = tcp;
 
-                // 현재 접속자 수(추가 전)로 스폰 선택
-                int existing = _players.Count; // 0이면 중앙, 1~4면 코너들
-                var spawn = (existing == 0)
-                    ? _spawns[0]
-                    : _spawns[Math.Min(existing, _spawns.Length - 1)];
-
                 var ps = new PlayerState
                 {
                     Id = id,
-                    X = spawn.x,
-                    Y = spawn.y,
+                    X = (MAP_W - SPRITE) / 2f,
+                    Y = (MAP_H - SPRITE) / 2f,
                     Dir = Dir.Right,
                     ColorIndex = rand.Next(0, 8),
                     Nick = "",
-                    // Score는 struct 기본값 0
                 };
                 _players[id] = ps;
                 _lastDir[id] = Dir.Right; // 기본 시각화 방향만
@@ -214,14 +184,8 @@ namespace PacmanServer
 
                                     if (!wasMoving)
                                     {
-                                        // 첫 사용자 입력으로 이동 시작
-                                        _moving[id] = true;
+                                        _moving[id] = true; // 첫 사용자 입력으로 이동 시작
                                         Console.WriteLine($"[INPUT] id={id} START MOVING dir={m.Dir}");
-                                    }
-                                    else
-                                    {
-                                        // 이미 이동 중이면 방향만 갱신
-                                        // Console.WriteLine($"[INPUT] id={id} CHANGE dir={m.Dir}");
                                     }
 
                                     _lastDir[id] = m.Dir;
@@ -237,7 +201,6 @@ namespace PacmanServer
 
                         case MsgType.RESTART:
                             {
-                                // ★ 게임오버 상태에서만 전역 리셋 허용
                                 lock (_lock)
                                 {
                                     if (_gameOver)
@@ -317,12 +280,11 @@ namespace PacmanServer
                     float nx = ps.X + dx;
                     float ny = ps.Y + dy;
 
-                    // 경계 Clamp + 위치 확정
                     ps.X = Clamp(nx, 0, MAP_W - SPRITE);
                     ps.Y = Clamp(ny, 0, MAP_H - SPRITE);
                     ps.Dir = d;
 
-                    // ★ 코인 충돌 판정(서버 권위)
+                    // 코인 충돌
                     int pacX = (int)ps.X;
                     int pacY = (int)ps.Y;
                     for (int i = 0; i < _coins.Count; i++)
@@ -341,7 +303,7 @@ namespace PacmanServer
                     _players[id] = ps;
                 }
 
-                // ★ 그레이스타임 동안엔 유령 정지 + 충돌 비활성
+                // 그레이스타임 이후 유령 동작
                 if (_graceTicks <= 0)
                 {
                     StepGhosts();
@@ -350,7 +312,7 @@ namespace PacmanServer
 
                 _tick++;
 
-                // ★ 라운드 완료 체크: 코인 모두 먹혔으면 다음 라운드, 코인 원복
+                // 라운드 업
                 bool allEaten = true;
                 for (int i = 0; i < _coins.Count; i++)
                 {
@@ -362,13 +324,12 @@ namespace PacmanServer
                     for (int i = 0; i < _coins.Count; i++)
                     {
                         var c = _coins[i];
-                        c.Eaten = false;       // 원상복구
+                        c.Eaten = false;
                         _coins[i] = c;
                     }
                     Console.WriteLine($"[SERVER] ROUND UP => #{_round}");
                 }
 
-                // 1초마다 샘플 로그(첫 번째 플레이어만)
                 if ((_tick % 30) == 0 && _players.Count > 0)
                 {
                     foreach (var p in _players.Values)
@@ -397,11 +358,10 @@ namespace PacmanServer
             {
                 snap = new SnapshotMsg
                 {
-                    // 상위 20비트에 라운드, 하위 20비트에 틱(클라 ROUND_SHIFT=20 가정)
                     Tick = (_round << 20) | (_tick & 0xFFFFF),
                     Players = new List<PlayerState>(_players.Values),
                     Coins = new List<CoinState>(_coins),
-                    Round = _round, // (C) 현재 라운드도 전송(호환용)
+                    Round = _round,
                     Ghosts = new List<GhostState>(_ghosts.Values),
                     GameOver = _gameOver
                 };
@@ -419,13 +379,12 @@ namespace PacmanServer
             }
         }
 
-        // ====== 코인 배치(클라와 동일한 규칙) ======
+        // ====== 코인 배치 ======
         private void SeedCoins()
         {
             if (_coins.Count > 0) return;
             int id = 0;
 
-            // 바깥 테두리
             int margin = 26;
             int step = 30;
             for (int x = margin; x <= MAP_W - margin - COIN_W; x += step)
@@ -439,7 +398,6 @@ namespace PacmanServer
                 _coins.Add(new CoinState { Id = id++, X = MAP_W - margin - COIN_W, Y = y, Eaten = false });
             }
 
-            // 내부 4개 블럭(4x4 그리드)
             int blockW = 100, blockH = 100;
             int topY = 150;
             int bottomY = MAP_H - 150 - blockH;
@@ -485,7 +443,6 @@ namespace PacmanServer
             // ★ 하향조정: 기본 4~5 (라운드 올라도 과속 방지)
             int baseSpeed = 4 + Math.Min(1, Math.Max(0, _round - 1)); // 4~5
 
-            // AI 별 가중치
             int SpeedFor(GhostAI ai)
             {
                 switch (ai)
@@ -523,11 +480,8 @@ namespace PacmanServer
                             if (_players.Count > 0)
                             {
                                 int target = NearestPlayerTo(g.X, g.Y);
-                                if (target >= 0)
-                                {
-                                    var p = _players[target];
-                                    g.Dir = BestDirToward(g, p.X, p.Y);
-                                }
+                                var p = _players[target];
+                                g.Dir = BestDirToward(g, p.X, p.Y);
                             }
                             (dx, dy) = DirToDelta(g.Dir, SpeedFor(g.AI));
                             break;
@@ -537,12 +491,9 @@ namespace PacmanServer
                             if (_players.Count > 0)
                             {
                                 int target = NearestPlayerTo(g.X, g.Y);
-                                if (target >= 0)
-                                {
-                                    var p = _players[target];
-                                    var toward = BestDirToward(g, p.X, p.Y);
-                                    g.Dir = Opposite(toward);
-                                }
+                                var p = _players[target];
+                                var toward = BestDirToward(g, p.X, p.Y);
+                                g.Dir = Opposite(toward);
                             }
                             (dx, dy) = DirToDelta(g.Dir, SpeedFor(g.AI));
                             break;
@@ -555,7 +506,6 @@ namespace PacmanServer
                             float right = MAP_W - M - SPRITE;
                             float top = M;
                             float bottom = MAP_H - M - SPRITE;
-                            // 4개 코너(시계방향)
                             float[,] pt = new float[,] {
                                 { left,  top    }, { right, top    },
                                 { right, bottom }, { left,  bottom }
@@ -567,7 +517,6 @@ namespace PacmanServer
                             (dx, dy) = MoveToward(g.X, g.Y, tx, ty, sp);
                             g.Dir = DirFromDelta(dx, dy);
                             float nx = g.X + dx, ny = g.Y + dy;
-                            // 목표점에 거의 도달하면 다음 코너로
                             if (Dist2(nx, ny, tx, ty) <= (sp * sp))
                             {
                                 idx = (idx + 1) & 3;
@@ -593,7 +542,7 @@ namespace PacmanServer
                 int ax = (int)ps.X + 4, ay = (int)ps.Y + 4, aw = SPRITE - 8, ah = SPRITE - 8;
                 foreach (var g in _ghosts.Values)
                 {
-                    int bx = (int)g.X + 2, by = (int)g.Y + 2, bw = 36, bh = 36; // 유령 40x40 기준 살짝 작은 히트박스
+                    int bx = (int)g.X + 2, by = (int)g.Y + 2, bw = 36, bh = 36;
                     if (Intersects(ax, ay, aw, ah, bx, by, bw, bh))
                     {
                         _gameOver = true;
@@ -650,18 +599,6 @@ namespace PacmanServer
             }
         }
 
-        private Dir NextClockwise(Dir d)
-        {
-            switch (d)
-            {
-                case Dir.Up: return Dir.Right;
-                case Dir.Right: return Dir.Down;
-                case Dir.Down: return Dir.Left;
-                case Dir.Left: return Dir.Up;
-                default: return Dir.Right;
-            }
-        }
-
         private static bool Intersects(int ax, int ay, int aw, int ah, int bx, int by, int bw, int bh)
         {
             return (ax < bx + bw) && (bx < ax + aw) && (ay < by + bh) && (by < ay + ah);
@@ -669,26 +606,23 @@ namespace PacmanServer
 
         private void ResetWorld()
         {
-            // 라운드/틱/게임오버 초기화
             _round = 1;
             _tick = 0;
             _gameOver = false;
-            _graceTicks = 90; // ★ 재시작 후 3초간 충돌 무시
+            _graceTicks = 90;
 
-            // 플레이어 위치/이동 초기화
             foreach (var id in new List<int>(_players.Keys))
             {
                 var ps = _players[id];
                 ps.X = (MAP_W - SPRITE) / 2f;
                 ps.Y = (MAP_H - SPRITE) / 2f;
                 ps.Dir = Dir.Right;
-                ps.Score = 0; // 점수 초기화(필요 없다면 주석)
+                ps.Score = 0;
                 _players[id] = ps;
                 _moving[id] = false;
                 _lastDir[id] = Dir.Right;
             }
 
-            // 코인 초기화
             for (int i = 0; i < _coins.Count; i++)
             {
                 var c = _coins[i];
@@ -696,7 +630,6 @@ namespace PacmanServer
                 _coins[i] = c;
             }
 
-            // 유령 재생성
             SpawnGhosts();
         }
 
@@ -718,17 +651,15 @@ namespace PacmanServer
             }
         }
 
-        // === 보조 함수들 (부동소수 → 정수 이동량 산출) ===
+        // === 보조 함수들 ===
         private (int dx, int dy) MoveToward(float x, float y, float tx, float ty, int speed)
         {
             double vx = tx - x, vy = ty - y;
             double d = Math.Sqrt(vx * vx + vy * vy);
             if (d < 1e-6) return (0, 0);
-            // 속도가 남아서 목표를 오버슈트하지 않게
             double step = Math.Min(speed, d);
             int dx = (int)Math.Round(vx / d * step);
             int dy = (int)Math.Round(vy / d * step);
-            // 최소 한 픽셀이라도 움직이도록 보정
             if (dx == 0 && Math.Abs(vx) > 0.1) dx = (vx > 0 ? 1 : -1);
             if (dy == 0 && Math.Abs(vy) > 0.1) dy = (vy > 0 ? 1 : -1);
             return (dx, dy);

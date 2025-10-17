@@ -62,6 +62,7 @@ namespace PacmanGame
         private bool pacmanMouthOpen = true;
         private enum Dir { Right, Left, Up, Down }
         private Dir pacmanDir = Dir.Right;
+        private bool _sentFirstInput = false; // ★ 첫 입력 보장
 
         private enum GhostEye { Left, Right, Up, Down }
 
@@ -104,7 +105,7 @@ namespace PacmanGame
             AutoScaleMode = AutoScaleMode.Dpi;
             ClientSize = new Size(720, 720);
             StartPosition = FormStartPosition.CenterScreen;
-            Text = "PacmanClient - Connected";
+            Text = "PacmanClient - Connecting..."; // ★ 연결 전 상태
             BackColor = Color.FromArgb(24, 24, 24);
             KeyPreview = true;
             KeyDown += GameForm_KeyDown;
@@ -133,7 +134,6 @@ namespace PacmanGame
             Controls.Add(lblScore);
             Controls.Add(lblInfo);
 
-            // 우측 정렬 유지
             lblInfo.SizeChanged += (s, e) =>
                 lblInfo.Location = new Point(ClientSize.Width - 16 - lblInfo.Width, lblInfo.Location.Y);
             this.Resize += (s, e) =>
@@ -154,7 +154,7 @@ namespace PacmanGame
 
             AddBlueBlockFrameTiled();
 
-            // 고스트 4개 (서버 스냅샷으로 위치 업데이트)
+            // 고스트 4개
             picGhostTL = MakeGhost("picGhostTL", Color.IndianRed, GhostEye.Right);  // -1
             picGhostTR = MakeGhost("picGhostTR", Color.DeepSkyBlue, GhostEye.Left); // -2
             picGhostBL = MakeGhost("picGhostBL", Color.Orange, GhostEye.Up);        // -3
@@ -171,9 +171,6 @@ namespace PacmanGame
             panelBoard.Controls.Add(picGhostBL);
             panelBoard.Controls.Add(picGhostBR);
 
-            // ★ 로컬 코인 생성 호출 제거 (서버 스냅샷으로만 렌더)
-            // BuildCleanCoinLayout();
-
             // 시작 오버레이
             panelStart = new Panel
             {
@@ -183,7 +180,7 @@ namespace PacmanGame
                 Location = new Point(0, 0)
             };
 
-            // 팩맨 (시작 화면에 먼저 올려둠)
+            // 팩맨
             picPacman = new PictureBox
             {
                 Name = "picPacman",
@@ -192,7 +189,7 @@ namespace PacmanGame
                 BackColor = Color.Transparent
             };
             panelStart.Controls.Add(picPacman);
-            picPacman.BringToFront(); // 버튼/텍스트 위로
+            picPacman.BringToFront();
 
             // 중앙 타이틀
             lblCenterTitle = new Label
@@ -242,7 +239,6 @@ namespace PacmanGame
             };
             panelStart.Controls.Add(lblHelp);
 
-            // 시작 위치: play 버튼 위로 12px, 수평 중앙
             AlignPacmanOverPlay();
             panelStart.Layout += (s, e) => AlignPacmanOverPlay();
             panelStart.Resize += (s, e) => AlignPacmanOverPlay();
@@ -252,16 +248,16 @@ namespace PacmanGame
 
             StartPacmanAnimation();
 
-            // === GameOver 오버레이 (부모를 Form으로 → 어떤 스프라이트보다 위) ===
+            // === GameOver 오버레이 ===
             panelGameOver = new Panel
             {
                 Name = "panelGameOver",
-                Dock = DockStyle.Fill,              // 폼 전체 덮기
+                Dock = DockStyle.Fill,
                 BackColor = Color.FromArgb(200, 0, 0, 0),
                 Visible = false
             };
-            this.Controls.Add(panelGameOver);       // ★ form에 직접 추가 (panelBoard 아님)
-            panelGameOver.Resize += (s, e) => LayoutGameOver();   // ★ 리사이즈마다 중앙정렬
+            this.Controls.Add(panelGameOver);
+            panelGameOver.Resize += (s, e) => LayoutGameOver();
 
             lblOver = new Label
             {
@@ -269,7 +265,7 @@ namespace PacmanGame
                 ForeColor = Color.White,
                 BackColor = Color.Transparent,
                 Font = new Font("Segoe UI", 36F, FontStyle.Bold),
-                AutoSize = true,                         // ★ 텍스트 크기만큼
+                AutoSize = true,
                 TextAlign = ContentAlignment.MiddleCenter
             };
             panelGameOver.Controls.Add(lblOver);
@@ -280,7 +276,7 @@ namespace PacmanGame
                 ForeColor = Color.Gold,
                 BackColor = Color.Transparent,
                 Font = new Font("Segoe UI", 18F, FontStyle.Bold),
-                AutoSize = true,                         // ★ 텍스트 크기만큼
+                AutoSize = true,
                 TextAlign = ContentAlignment.MiddleCenter
             };
             panelGameOver.Controls.Add(lblFinalScore);
@@ -293,13 +289,13 @@ namespace PacmanGame
                 Font = new Font("Segoe UI", 16F, FontStyle.Bold),
                 AutoSize = false,
                 TextAlign = ContentAlignment.MiddleCenter,
-                Size = new Size(240, 56),                 // ★ 버튼 고정 크기
+                Size = new Size(240, 56),
                 Cursor = Cursors.Hand
             };
             btnRestart.Click += (s, e) => { TryRestart(); };
             panelGameOver.Controls.Add(btnRestart);
             panelGameOver.BringToFront();
-            LayoutGameOver();                            // ★ 최초 한 번 중앙정렬
+            LayoutGameOver();
 
             ResumeLayout(false);
         }
@@ -318,20 +314,16 @@ namespace PacmanGame
         {
             _myId = w.YourId;
             lblInfo.Text = $"ME: {_nickname}  |  Server: {_serverIp}";
-            // ※ 자동 킥스타트(입력 전송) 없음 — 서버가 '첫 사용자 입력'부터만 이동 시작
+            Text = "PacmanClient - Connected"; // ★ 연결 완료 시점에 타이틀 갱신
         }
 
-        // 스냅샷 반영
         private void Client_OnSnapshot(SnapshotMsg s)
         {
             if (IsDisposed) return;
 
-            // ★ Tick 상위 비트에서 라운드 추출
             const int ROUND_SHIFT = 20;
             int round = s.Tick >> ROUND_SHIFT;
-            int tick = s.Tick & ((1 << ROUND_SHIFT) - 1); // 필요하면 사용
 
-            // 플레이어 수(양수 ID만)로 표시
             int count = 0;
             if (s.Players != null)
                 foreach (var ps in s.Players) if (ps.Id > 0) count++;
@@ -341,26 +333,20 @@ namespace PacmanGame
                 lblInfo.Text = $"ME: {_nickname}  |  Server: {_serverIp}  |  Players: {count}";
 
                 var alive = new HashSet<int>();
-                bool myFound = false;
-
                 bool onStartOverlay = panelStart != null && !panelStart.IsDisposed && picPacman.Parent == panelStart;
 
                 if (s.Players != null)
                 {
                     foreach (var ps in s.Players)
                     {
-                        // ── 내 스프라이트: 시작 오버레이가 뜬 동안은 서버 좌표로 밀지 않음 ──
                         if (ps.Id == _myId && onStartOverlay)
                         {
                             alive.Add(ps.Id);
-                            myFound = true;
-                            // ★ 내 점수 HUD 갱신 (오버레이 중에도 최신값 반영)
                             _score = ps.Score;
                             lblScore.Text = $"SCORE: {_score}  (R:{round})";
                             continue;
                         }
 
-                        // ── 플레이어 처리 ──
                         var sprite = GetOrCreateSprite(ps.Id);
 
                         int x = (int)ps.X, y = (int)ps.Y;
@@ -369,20 +355,17 @@ namespace PacmanGame
                         if (y > panelBoard.Height - sprite.Height) y = panelBoard.Height - sprite.Height;
 
                         sprite.Location = new Point(x, y);
-                        if (!panelGameOver.Visible) sprite.BringToFront(); // ★ 오버레이 보이면 끌어올리지 않음
+                        if (!panelGameOver.Visible) sprite.BringToFront();
                         alive.Add(ps.Id);
 
-                        // ★ 내 점수 HUD 갱신
                         if (ps.Id == _myId)
                         {
-                            myFound = true;
                             _score = ps.Score;
                             lblScore.Text = $"SCORE: {_score}  (R:{round})";
                         }
                     }
                 }
 
-                // 스냅샷에 없는 플레이어 스프라이트 정리
                 var toRemove = new List<int>();
                 foreach (var kv in _playerSprites) if (!alive.Contains(kv.Key)) toRemove.Add(kv.Key);
                 foreach (var id in toRemove)
@@ -395,14 +378,12 @@ namespace PacmanGame
                     _playerSprites.Remove(id);
                 }
 
-                if (panelStart != null) panelStart.BringToFront();  // ★ 시작 오버레이 항상 최상단으로
+                if (panelStart != null) panelStart.BringToFront();
 
-                // ★ 코인 렌더(서버 권위)
                 if (s.Coins != null && s.Coins.Count > 0)
                 {
                     if (!_coinSeeded)
                     {
-                        // 기존에 만들었던 로컬 코인들 정리(있다면) — 안전하게 복사 후 제거
                         var removeList = new List<Control>();
                         foreach (Control c in panelBoard.Controls)
                         {
@@ -430,17 +411,14 @@ namespace PacmanGame
                             };
                             _coinsById[c.Id] = pb;
                             panelBoard.Controls.Add(pb);
-                            // ★ 코인은 뒤로(시작 오버레이/플레이어가 위로)
                             pb.SendToBack();
                         }
-                        // ★ 시작 오버레이가 있다면 항상 최상단으로
                         if (panelStart != null && !panelStart.IsDisposed)
                             panelStart.BringToFront();
                         _coinSeeded = true;
                     }
                     else
                     {
-                        // 이후 틱: Visible만 토글
                         foreach (var c in s.Coins)
                         {
                             if (_coinsById.TryGetValue(c.Id, out var pb))
@@ -449,11 +427,9 @@ namespace PacmanGame
                     }
                 }
 
-                // ★ 유령 렌더
                 if (s.Ghosts != null)
                     UpdateGhostsFromSnapshot(s.Ghosts);
 
-                // ★ 서버 게임오버 플래그 반영
                 if (s.GameOver && !_isGameOver)
                 {
                     _isGameOver = true;
@@ -467,7 +443,6 @@ namespace PacmanGame
             };
 
             if (InvokeRequired) BeginInvoke(ui); else ui();
-            // ★ 스프라이트가 BringToFront 해도 마지막에 오버레이를 다시 위로
             if (InvokeRequired) BeginInvoke((Action)(() => AfterSpritesUpdatedKeepOverlayOnTop()));
             else AfterSpritesUpdatedKeepOverlayOnTop();
         }
@@ -477,20 +452,16 @@ namespace PacmanGame
             try
             {
                 lblFinalScore.Text = $"{_score}점 / Round {round}";
-                LayoutGameOver();                        // ★ 표시 직전에도 중앙정렬
+                LayoutGameOver();
                 panelGameOver.Visible = true;
-                panelGameOver.BringToFront();  // ★ 최상단 유지
+                panelGameOver.BringToFront();
             }
             catch { }
         }
 
         private void HideGameOver()
         {
-            try
-            {
-                panelGameOver.Visible = false;
-            }
-            catch { }
+            try { panelGameOver.Visible = false; } catch { }
         }
 
         private void AfterSpritesUpdatedKeepOverlayOnTop()
@@ -503,14 +474,12 @@ namespace PacmanGame
         private void LayoutGameOver()
         {
             if (panelGameOver == null || panelGameOver.IsDisposed) return;
-            // 컨텐츠 총 높이 계산 (간격 포함)
             int gap1 = 18, gap2 = 22;
             int totalH = lblOver.Height + gap1 + lblFinalScore.Height + gap2 + btnRestart.Height;
             int cx = panelGameOver.ClientSize.Width / 2;
             int cy = panelGameOver.ClientSize.Height / 2;
             int top = cy - totalH / 2;
 
-            // 가로 중앙: Left = 중점 - 컨트롤 가로/2
             lblOver.Left = cx - (lblOver.Width / 2);
             lblOver.Top = top;
 
@@ -523,7 +492,6 @@ namespace PacmanGame
 
         private void TryRestart()
         {
-            // 서버에 다시 시작 요청 → 서버 Reset 후 s.GameOver=false가 오면 오버레이가 자동으로 숨겨짐
             _client?.SendRestart();
         }
 
@@ -537,7 +505,6 @@ namespace PacmanGame
                 int y = Math.Max(0, Math.Min(panelBoard.Height - pb.Height, (int)g.Y));
                 pb.Location = new Point(x, y);
                 pb.Visible = true;
-                // 눈 방향 처리(선택) : g.Dir 사용
                 switch (g.Dir)
                 {
                     case MoveDir.Left: SetGhostEyes(pb, GhostEye.Left); break;
@@ -545,7 +512,7 @@ namespace PacmanGame
                     case MoveDir.Up: SetGhostEyes(pb, GhostEye.Up); break;
                     case MoveDir.Down: SetGhostEyes(pb, GhostEye.Down); break;
                 }
-                if (!panelGameOver.Visible) pb.BringToFront(); // ★ 오버레이 보이면 끌어올리지 않음
+                if (!panelGameOver.Visible) pb.BringToFront();
             }
         }
 
@@ -563,8 +530,6 @@ namespace PacmanGame
 
         private void SetGhostEyes(PictureBox pb, GhostEye eyes)
         {
-            // 파일 이미지를 쓰는 경우엔 눈만 바꾸기 어려우므로,
-            // MakeGhost에서 Tag에 바디 색을 넣어뒀을 때만 재그림.
             if (!(pb?.Tag is Color body)) return;
             if (pb.Image != null) pb.Image.Dispose();
             pb.Image = DrawGhostBitmap(body, eyes, pb.Width, pb.Height);
@@ -584,13 +549,12 @@ namespace PacmanGame
         // -----------------------------
         private void StartOverlay_Click(object sender, EventArgs e)
         {
-            // 오버레이 닫기 (여전히 정지 상태 — 자동 입력 전송 없음)
+            // 오버레이 닫기
             if (picPacman.Parent == panelStart)
             {
                 panelStart.Controls.Remove(picPacman);
                 panelBoard.Controls.Add(picPacman);
             }
-            // 중앙 배치
             picPacman.Location = new Point(panelBoard.Width / 2 - picPacman.Width / 2,
                                            panelBoard.Height / 2 - picPacman.Height / 2);
             picPacman.BringToFront();
@@ -606,15 +570,15 @@ namespace PacmanGame
             panelBoard.Update();
             panelBoard.Focus();
 
-            _gameStarted = true; // 이제부터 키 입력 허용 (서버는 '첫 사용자 입력' 이후에만 이동 시작)
-
+            _gameStarted = true;      // 이제부터 키 입력 허용
+            _sentFirstInput = false;  // ★ 시작마다 리셋
             StartPacmanAnimation();
         }
 
         private void GameForm_KeyDown(object sender, KeyEventArgs e)
         {
-            if (!_gameStarted) return; // Play 전에는 무시
-            if (_isGameOver) return;   // 게임오버 중 입력 무시(선택)
+            if (!_gameStarted) return;
+            if (_isGameOver) return;
 
             var prev = pacmanDir;
             if (e.KeyCode == Keys.Right) pacmanDir = Dir.Right;
@@ -622,15 +586,19 @@ namespace PacmanGame
             else if (e.KeyCode == Keys.Up) pacmanDir = Dir.Up;
             else if (e.KeyCode == Keys.Down) pacmanDir = Dir.Down;
 
-            if (prev != pacmanDir && picPacman != null)
+            // ★ 첫 키는 동일 방향이어도 무조건 1회 전송 → 서버 이동 시작 트리거
+            if (!_sentFirstInput || prev != pacmanDir)
             {
-                if (picPacman.Image != null) picPacman.Image.Dispose();
-                picPacman.Image = DrawPacmanFrame(pacmanMouthOpen, pacmanDir);
+                if (picPacman != null)
+                {
+                    if (picPacman.Image != null) picPacman.Image.Dispose();
+                    picPacman.Image = DrawPacmanFrame(pacmanMouthOpen, pacmanDir);
+                }
                 _client?.SendInput(MapDir(pacmanDir));
+                _sentFirstInput = true;
             }
         }
 
-        // 로컬 Dir(렌더용) → Shared.MoveDir(네트워크용) 매핑
         private MoveDir MapDir(Dir d)
         {
             switch (d)
@@ -644,7 +612,7 @@ namespace PacmanGame
         }
 
         // -----------------------------
-        // HUD 보조 (이제 서버 점수만 표시하므로 내부 가산은 사용 안 함)
+        // HUD 보조
         // -----------------------------
         private void AddScore(int delta)
         {
@@ -675,6 +643,9 @@ namespace PacmanGame
             pacmanAnimTimer.Start();
         }
 
+        // -----------------------------
+        // 코인/고스트/프레임 유틸
+        // -----------------------------
         private Image DrawPacmanFrame(bool mouthOpen, Dir dir)
         {
             Bitmap bmp = new Bitmap(44, 44);
@@ -702,9 +673,6 @@ namespace PacmanGame
             return bmp;
         }
 
-        // -----------------------------
-        // 코인/고스트/프레임 유틸
-        // -----------------------------
         private Image DrawCoinBitmap(int w, int h)
         {
             Bitmap bmp = new Bitmap(w, h);
@@ -760,7 +728,7 @@ namespace PacmanGame
             }
         }
 
-        // ===== 아래 로컬 코인 레이아웃 유틸은 더 이상 호출하지 않음(호환용으로 남김) =====
+        // ===== 아래 로컬 코인 레이아웃 유틸은 호출하지 않지만 남겨둠 =====
         private void BuildCleanCoinLayout()
         {
             foreach (var c in coins)
@@ -914,17 +882,12 @@ namespace PacmanGame
             return bmp;
         }
 
-        // -----------------------------
-        // 시작 오버레이 배치 헬퍼(플레이 버튼 위 12px)
-        // -----------------------------
         private void AlignPacmanOverPlay()
         {
             if (panelStart == null || picPacman == null || lblPlay == null || lblCenterTitle == null) return;
 
-            // 가로 가운데
             int x = panelStart.Width / 2 - picPacman.Width / 2;
 
-            // play 버튼 위로 12px 띄움 (제목 아래 최소 6px 보장)
             int y = lblPlay.Top - picPacman.Height - 12;
             int minY = lblCenterTitle.Bottom + 6;
             if (y < minY) y = minY;
@@ -933,9 +896,6 @@ namespace PacmanGame
             picPacman.BringToFront();
         }
 
-        // -----------------------------
-        // 이미지 로드 & 보조
-        // -----------------------------
         private Image LoadImage(string fileName, bool fallbackPacman)
         {
             try
@@ -966,10 +926,8 @@ namespace PacmanGame
         // =============================
         private PictureBox GetOrCreateSprite(int id)
         {
-            // 내 스프라이트 재사용
             if (id == _myId && picPacman != null)
             {
-                // 중복 제거
                 if (_playerSprites.TryGetValue(id, out var dup) && dup != picPacman && dup != null && !dup.IsDisposed)
                 {
                     if (dup.Parent != null) dup.Parent.Controls.Remove(dup);
@@ -977,16 +935,13 @@ namespace PacmanGame
                     _playerSprites.Remove(id);
                 }
 
-                // 부모는 StartOverlay_Click에서 옮김(여기서 강제 변경하지 않음)
                 _playerSprites[id] = picPacman;
                 return picPacman;
             }
 
-            // 다른 플레이어: 있으면 그대로 사용
             if (_playerSprites.TryGetValue(id, out var pb) && pb != null && !pb.IsDisposed)
                 return pb;
 
-            // 새로 생성(간단한 팩맨 모양)
             pb = new PictureBox
             {
                 Size = new Size(44, 44),

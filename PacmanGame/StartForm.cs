@@ -1,8 +1,8 @@
 ﻿using System;
 using System.Drawing;
+using System.Threading.Tasks;
 using System.Windows.Forms;
-using System.Threading.Tasks;   // + 비동기 연결용
-// using PacmanGame;  // ← 불필요, 제거
+using Shared; // ★ GameConsts.DEFAULT_PORT
 
 namespace PacmanGame
 {
@@ -98,7 +98,7 @@ namespace PacmanGame
             ResumeLayout(false);
         }
 
-        // StartForm.cs 내부
+        // ★ “연결 먼저, 창은 그 다음”
         private async void BtnConnect_Click(object sender, EventArgs e)
         {
             string nickname = (txtName.Text ?? "").Trim();
@@ -113,37 +113,28 @@ namespace PacmanGame
             if (string.IsNullOrWhiteSpace(serverIp))
                 serverIp = "127.0.0.1";
 
-            // 1) 먼저 GameClient 만들기
             var client = new GameClient();
 
-            // 2) GameForm를 먼저 생성/표시해서(= 생성자에서 이벤트 구독 끝난 상태) 렌더 준비
-            var game = new PacmanGame.GameForm(nickname, serverIp, client); // ★ 완전 수식
-            game.FormClosed += (s, _) =>
-            {
-                try { client.Dispose(); } catch { }
-                this.Close();  // 게임창 닫히면 앱 종료
-                               // 또는 Application.Exit(); 를 써도 됨
-            };
-
-            this.Hide();
-            game.Show();   // ★ Show가 먼저!
-
-            // 3) 그 다음에 서버 연결 시작
             try
             {
-                // StartAsync가 없으므로 Connect를 백그라운드에서 실행
-                await Task.Run(() => client.Connect(serverIp, 9000, nickname));
+                // 먼저 연결 시도(백그라운드)
+                await Task.Run(() => client.Connect(serverIp, GameConsts.DEFAULT_PORT, nickname));
             }
             catch (Exception ex)
             {
-                // 연결 실패 시 롤백 처리
                 MessageBox.Show("서버에 연결할 수 없습니다.\n" + ex.Message, "연결 실패",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
-
-                if (!game.IsDisposed) game.Close();
-                this.Show();
                 try { client.Dispose(); } catch { }
+                return;
             }
+
+            // 연결 성공 후에만 게임창 띄우기
+            var game = new PacmanGame.GameForm(nickname, serverIp, client);
+            game.FormClosed += (s, _) => { try { client.Dispose(); } catch { } this.Close(); };
+
+            this.Hide();
+            game.StartPosition = FormStartPosition.CenterScreen;
+            game.Show();
         }
     }
 }
