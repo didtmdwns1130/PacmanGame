@@ -8,12 +8,15 @@ using System.Text;
 namespace Shared
 {
     // 메시지 타입
-    public enum MsgType : int { JOIN = 1, WELCOME = 2, INPUT = 3, SNAPSHOT = 4 }
+    public enum MsgType : int { JOIN = 1, WELCOME = 2, INPUT = 3, SNAPSHOT = 4, RESTART = 5 }
 
     public interface INetMessage { MsgType Type { get; } }
 
     // -------- 모델 --------
     public enum Dir : int { Right = 0, Left = 1, Up = 2, Down = 3 }
+
+    // ★ 추가: 유령 AI 타입
+    public enum GhostAI : int { Random = 0, Chase = 1, Flee = 2, Patrol = 3 }
 
     public struct PlayerState
     {
@@ -35,6 +38,16 @@ namespace Shared
         public int X;      // 좌상단 픽셀 좌표
         public int Y;
         public bool Eaten; // 먹혔는지 여부
+    }
+
+    // ★ 추가: 유령 상태(음수 Id 사용)
+    public struct GhostState
+    {
+        public int Id;     // -1, -2, -3, -4
+        public float X;    // 픽셀 좌표
+        public float Y;
+        public Dir Dir;    // 눈 방향 표시용
+        public GhostAI AI; // 서버 내부 AI 식별용
     }
 
     // -------- 메시지 --------
@@ -69,6 +82,16 @@ namespace Shared
         // ★ 추가: 전체 코인 상태(간단하게 매 틱 전체 보냄)
         public List<CoinState> Coins;
         public int Round; // ★ 현재 라운드
+
+        // ★ 추가: 유령/게임오버
+        public List<GhostState> Ghosts; // 없으면 0
+        public bool GameOver;
+    }
+
+    // ★ 추가: 다시 시작 요청
+    public struct RestartMsg : INetMessage
+    {
+        public MsgType Type => MsgType.RESTART;
     }
 
     // -------- 직렬화 유틸(길이 프레임 + 바이너리) --------
@@ -143,6 +166,33 @@ namespace Shared
                                     bw.Write(c.Eaten);
                                 }
                             }
+
+                            // Round
+                            bw.Write(m.Round);
+
+                            // ★ 추가: Ghosts
+                            int gCount = m.Ghosts == null ? 0 : m.Ghosts.Count;
+                            bw.Write(gCount);
+                            if (gCount > 0)
+                            {
+                                for (int i = 0; i < gCount; i++)
+                                {
+                                    var g = m.Ghosts[i];
+                                    bw.Write(g.Id);
+                                    bw.Write(g.X);
+                                    bw.Write(g.Y);
+                                    bw.Write((int)g.Dir);
+                                    bw.Write((int)g.AI);
+                                }
+                            }
+
+                            // ★ 추가: GameOver
+                            bw.Write(m.GameOver);
+                            break;
+                        }
+                    case MsgType.RESTART:
+                        {
+                            // payload 없음
                             break;
                         }
                 }
@@ -232,12 +282,40 @@ namespace Shared
                                 coins.Add(c);
                             }
 
+                            // Round
+                            int round = br.ReadInt32();
+
+                            // ★ 추가: Ghosts
+                            int gCount = br.ReadInt32();
+                            var ghosts = new List<GhostState>(gCount);
+                            for (int i = 0; i < gCount; i++)
+                            {
+                                GhostState g;
+                                g.Id = br.ReadInt32();
+                                g.X = br.ReadSingle();
+                                g.Y = br.ReadSingle();
+                                g.Dir = (Dir)br.ReadInt32();
+                                g.AI = (GhostAI)br.ReadInt32();
+                                ghosts.Add(g);
+                            }
+
+                            // ★ 추가: GameOver
+                            bool gameOver = br.ReadBoolean();
+
                             return new SnapshotMsg
                             {
                                 Tick = tick,
                                 Players = players,
-                                Coins = coins
+                                Coins = coins,
+                                Round = round, // (C) 현재 라운드도 전송(호환용)
+                                Ghosts = ghosts,
+                                GameOver = gameOver
                             };
+                        }
+                    case MsgType.RESTART:
+                        {
+                            // payload 없음
+                            return new RestartMsg();
                         }
                     default:
                         return null;

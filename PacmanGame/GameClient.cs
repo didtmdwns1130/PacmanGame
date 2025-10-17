@@ -1,4 +1,4 @@
-﻿// PacmanGame/GameClient.cs — C# 7.3 (첫 입력 레이스 방지 반영본)
+﻿// PacmanGame/GameClient.cs — C# 7.3 (첫 입력 레이스 방지 반영본 + RestartMsg)
 using Shared;
 using System;
 using System.Net.Sockets;
@@ -52,6 +52,7 @@ namespace PacmanGame
                     {
                         OnSnapshot?.Invoke((SnapshotMsg)msg);
                     }
+                    // 다른 타입은 무시(RESTART 등)
                 }
             }
             catch
@@ -77,6 +78,23 @@ namespace PacmanGame
                 lock (_sendLock)
                 {
                     NetProto.WriteFrame(_tcp.GetStream(), m);
+                }
+            }
+            catch
+            {
+                // 연결 종료 중이면 무시
+            }
+        }
+
+        // ★ 추가: 다시 시작 요청 전송
+        public void SendRestart()
+        {
+            if (!IsConnected) return;
+            try
+            {
+                lock (_sendLock)
+                {
+                    NetProto.WriteFrame(_tcp.GetStream(), new RestartMsg());
                 }
             }
             catch
