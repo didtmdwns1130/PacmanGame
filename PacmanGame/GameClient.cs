@@ -1,4 +1,4 @@
-﻿// PacmanGame/GameClient.cs — C# 7.3 (첫 입력 레이스 방지 반영본 + RestartMsg)
+﻿// PacmanGame/GameClient.cs — C# 7.3 (WELCOME 수신 고정 + RestartMsg)
 using Shared;
 using System;
 using System.Net.Sockets;
@@ -42,39 +42,44 @@ namespace PacmanGame
                     var msg = NetProto.ReadFrame(stream);
                     if (msg == null) break;
 
-                    if (msg.Type == MsgType.WELCOME)
+                    switch (msg.Type)
                     {
-                        var w = (WelcomeMsg)msg;
-                        MyPlayerId = w.YourId;      // 내 ID 저장
-                        OnWelcome?.Invoke(w);
+                        case MsgType.WELCOME:
+                            {
+                                var w = (WelcomeMsg)msg;
+                                MyPlayerId = w.YourId;   // ★ 내 ID 저장
+                                OnWelcome?.Invoke(w);    // ★ 반드시 이벤트 발행
+                                break;
+                            }
+                        case MsgType.SNAPSHOT:
+                            {
+                                var s = (SnapshotMsg)msg;
+                                OnSnapshot?.Invoke(s);
+                                break;
+                            }
+                            // 필요 시 다른 타입(JOIN/RESTART 등) 추가 처리 가능
                     }
-                    else if (msg.Type == MsgType.SNAPSHOT)
-                    {
-                        OnSnapshot?.Invoke((SnapshotMsg)msg);
-                    }
-                    // 다른 타입은 무시(RESTART 등)
                 }
             }
             catch
             {
-                // 연결 종료/예외 무시
+                // 연결 종료/예외 무시(필요시 로깅)
+            }
+            finally
+            {
+                try { _tcp?.Close(); } catch { }
             }
         }
 
         // 방향 입력 전송 — 서버가 소켓별로 유저를 식별하므로
-        // WELCOME 도착 전이어도 버리지 않고 전송해 레이스를 줄인다.
+        // WELCOME 도착 전이어도 전송 가능(서버에서 정상 처리됨)
         public void SendInput(MoveDir dir)
         {
             if (!IsConnected) return;
 
             try
             {
-                var m = new InputMsg
-                {
-                    Dir = dir,
-                    IsPressed = true
-                };
-
+                var m = new InputMsg { Dir = dir, IsPressed = true };
                 lock (_sendLock)
                 {
                     NetProto.WriteFrame(_tcp.GetStream(), m);
@@ -86,7 +91,7 @@ namespace PacmanGame
             }
         }
 
-        // ★ 추가: 다시 시작 요청 전송
+        // 다시 시작 요청
         public void SendRestart()
         {
             if (!IsConnected) return;

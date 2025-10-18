@@ -105,6 +105,9 @@ namespace PacmanServer
         // --- 클라이언트 핸들러 ---
         private async Task HandleClientAsync(TcpClient tcp)
         {
+            // 경고(CS1998) 제거용 — 동작 영향 없음
+            await Task.Yield();
+
             try { tcp.NoDelay = true; } catch { }
 
             int id;
@@ -263,73 +266,36 @@ namespace PacmanServer
                 {
                     var ps = _players[id];
 
-                    if (!_moving.TryGetValue(id, out var mv) || !mv)
-                        continue; // 이동 시작 전에는 그대로 정지
-
-                    var d = _lastDir.TryGetValue(id, out var dir) ? dir : Dir.Right;
-
-                    // === 코인 충돌 : 스윕(이동 구간) + 원형 근접 판정 ===
+                    // ★ 이동 여부와 무관하게 코인 히트 체크가 동작하도록 이전 위치를 저장
                     float prevX = ps.X, prevY = ps.Y;
 
-                    int dx = 0, dy = 0;
-
-                    // 라운드 기반 가속 (R1:8, R2:10, R3:12, R4:14, R5+:16)
-                    int speed = 8 + Math.Min(4, Math.Max(0, _round - 1)) * 2;
-
-                    if (d == Dir.Left) dx = -speed;
-                    else if (d == Dir.Right) dx = +speed;
-                    else if (d == Dir.Up) dy = -speed;
-                    else if (d == Dir.Down) dy = +speed;
-
-                    float nx = ps.X + dx;
-                    float ny = ps.Y + dy;
-
-                    ps.X = Clamp(nx, 0, MAP_W - SPRITE);
-                    ps.Y = Clamp(ny, 0, MAP_H - SPRITE);
-                    ps.Dir = d;
-
-                    // 팩맨 중심의 이전/현재 위치
-                    float pacPrevCx = prevX + SPRITE * 0.5f;
-                    float pacPrevCy = prevY + SPRITE * 0.5f;
-                    float pacCurCx = ps.X + SPRITE * 0.5f;
-                    float pacCurCy = ps.Y + SPRITE * 0.5f;
-
-                    // 허용 반경(튜닝): 팩맨 반지름 약 0.45 * SPRITE + 코인 반지름
-                    int r = (int)Math.Round(SPRITE * 0.45f) + (COIN_W / 2);
-                    int r2 = r * r;
-
-                    for (int i = 0; i < _coins.Count; i++)
+                    // 이동 처리
+                    if (_moving.TryGetValue(id, out var mv) && mv)
                     {
-                        var coin = _coins[i];
-                        if (coin.Eaten) continue;
+                        var d = _lastDir.TryGetValue(id, out var dir) ? dir : Dir.Right;
 
-                        float cx = coin.X + COIN_W * 0.5f;
-                        float cy = coin.Y + COIN_H * 0.5f;
+                        int dx = 0, dy = 0;
 
-                        // 점-선분 거리^2 (coin center → 팩맨 이동 선분)
-                        float vx = pacCurCx - pacPrevCx;
-                        float vy = pacCurCy - pacPrevCy;
-                        float wx = cx - pacPrevCx;
-                        float wy = cy - pacPrevCy;
+                        // 라운드 기반 가속 (R1:8, R2:10, R3:12, R4:14, R5+:16)
+                        int speed = 8 + Math.Min(4, Math.Max(0, _round - 1)) * 2;
 
-                        float vv = vx * vx + vy * vy;
-                        float t = vv <= 1e-6f ? 0f : (wx * vx + wy * vy) / vv;
-                        if (t < 0f) t = 0f; else if (t > 1f) t = 1f;
+                        if (d == Dir.Left) dx = -speed;
+                        else if (d == Dir.Right) dx = +speed;
+                        else if (d == Dir.Up) dy = -speed;
+                        else if (d == Dir.Down) dy = +speed;
 
-                        float closestX = pacPrevCx + t * vx;
-                        float closestY = pacPrevCy + t * vy;
-                        float dx2 = cx - closestX;
-                        float dy2 = cy - closestY;
+                        float nx = ps.X + dx;
+                        float ny = ps.Y + dy;
 
-                        if ((dx2 * dx2 + dy2 * dy2) <= r2)
-                        {
-                            coin.Eaten = true;
-                            _coins[i] = coin;
-                            ps.Score += COIN_SCORE;
-                        }
+                        ps.X = Clamp(nx, 0, MAP_W - SPRITE);
+                        ps.Y = Clamp(ny, 0, MAP_H - SPRITE);
+                        ps.Dir = d;
                     }
 
-                    _players[id] = ps;
+                    // ★ 이동 전후 선분-원 스윕 충돌로 코인 히트 체크 + 점수 가산
+                    CheckCoinHit(ref ps, prevX, prevY);
+
+                    _players[id] = ps;   // ★ 점수 반영 상태 저장(필수)
                 }
 
                 // 그레이스타임 이후 유령 동작
@@ -341,7 +307,7 @@ namespace PacmanServer
 
                 _tick++;
 
-                // 라운드 업
+                // 라운드 업: 모든 코인을 먹었으면(모두 Eaten) 라운드 증가
                 bool allEaten = true;
                 for (int i = 0; i < _coins.Count; i++)
                 {
@@ -371,6 +337,57 @@ namespace PacmanServer
             }
         }
 
+        // ★ 코인 충돌 처리: 스윕/정지 모두 히트 인정 + 점수 가산
+        private void CheckCoinHit(ref PlayerState ps, float x0, float y0)
+        {
+            float x1 = ps.X, y1 = ps.Y;
+
+            // 팩맨/코인 반경 (기존 렌더 기준과 유사하게 계산)
+            float pacR = SPRITE * 0.45f;          // 팩맨 대략 반경
+            float coinR = COIN_W * 0.5f;          // 코인 반경
+            float r = pacR + coinR;
+            float r2 = r * r;
+
+            // 센터 좌표로 판정
+            float p0x = x0 + SPRITE * 0.5f, p0y = y0 + SPRITE * 0.5f;
+            float p1x = x1 + SPRITE * 0.5f, p1y = y1 + SPRITE * 0.5f;
+
+            for (int i = 0; i < _coins.Count; i++)
+            {
+                var c = _coins[i];
+                if (c.Eaten) continue;
+
+                float cx = c.X + COIN_W * 0.5f;
+                float cy = c.Y + COIN_H * 0.5f;
+
+                // 현재 프레임 위치에서의 겹침
+                float dxNow = p1x - cx, dyNow = p1y - cy;
+                bool hitNow = (dxNow * dxNow + dyNow * dyNow) <= r2;
+                // 이동 경로(선분)에서의 최소거리
+                bool hitSweep = SegDist2(p0x, p0y, p1x, p1y, cx, cy) <= r2;
+
+                if (hitNow || hitSweep)
+                {
+                    c.Eaten = true;
+                    _coins[i] = c;
+                    ps.Score += COIN_SCORE; // 점수 가산
+                }
+            }
+        }
+
+        // 선분-점 최소거리^2
+        private static float SegDist2(float x0, float y0, float x1, float y1, float px, float py)
+        {
+            float vx = x1 - x0, vy = y1 - y0;
+            float wx = px - x0, wy = py - y0;
+            float vv = vx * vx + vy * vy;
+            float t = vv > 0 ? (vx * wx + vy * wy) / vv : 0f;
+            if (t < 0f) t = 0f; else if (t > 1f) t = 1f;
+            float cx = x0 + t * vx, cy = y0 + t * vy;
+            float dx = px - cx, dy = py - cy;
+            return dx * dx + dy * dy;
+        }
+
         private static float Clamp(float v, float lo, float hi)
         {
             if (v < lo) return lo;
@@ -378,37 +395,44 @@ namespace PacmanServer
             return v;
         }
 
-        // --- 스냅샷 구성: Score 포함 ---
-        private SnapshotMsg BuildSnapshot()
-        {
-            // 호출자는 락을 잡은 상태여야 안전하다.
-            var snap = new SnapshotMsg
-            {
-                // 상위 비트에 라운드, 하위에 틱을 묶어서 전송(선택적)
-                Tick = (_round << 20) | (_tick & 0xFFFFF),
-
-                // PlayerState에는 Score가 포함되어 있으므로 그대로 복사하면 됨
-                Players = new List<PlayerState>(_players.Values),
-
-                Coins = new List<CoinState>(_coins),
-                Round = _round,
-                Ghosts = new List<GhostState>(_ghosts.Values),
-                GameOver = _gameOver
-            };
-            return snap;
-        }
-
-        // --- 스냅샷 브로드캐스트 ---
+        // --- 스냅샷 브로드캐스트 (★ Players 명시 복사: Score 포함) ---
         private void BroadcastSnapshot()
         {
             SnapshotMsg snap;
             List<TcpClient> clients;
             lock (_lock)
             {
-                snap = BuildSnapshot(); // Score 포함된 PlayerState가 담김
+                // ★ Players를 명시 복사(Score 포함) — 누락 방지
+                var players = new List<PlayerState>(_players.Count);
+                foreach (var kv in _players)
+                {
+                    var p = kv.Value;
+                    players.Add(new PlayerState
+                    {
+                        Id = p.Id,
+                        X = p.X,
+                        Y = p.Y,
+                        Dir = p.Dir,
+                        ColorIndex = p.ColorIndex,
+                        Score = p.Score,   // 핵심
+                        Nick = p.Nick
+                    });
+                }
+
+                snap = new SnapshotMsg
+                {
+                    Tick = _tick,
+                    Round = _round,
+                    Players = players,
+                    Coins = new List<CoinState>(_coins),
+                    Ghosts = new List<GhostState>(_ghosts.Values),
+                    GameOver = _gameOver
+                };
+
                 clients = new List<TcpClient>(_clients.Values);
             }
 
+            // 개별 전송(유틸 없이 직접 루프) — Broadcast 유무와 무관하게 컴파일
             foreach (var tcp in clients)
             {
                 if (tcp == null || !tcp.Connected) continue;
@@ -416,7 +440,7 @@ namespace PacmanServer
                 {
                     NetProto.WriteFrame(tcp.GetStream(), snap);
                 }
-                catch { /* 실패는 다음 틱에서 정리됨 */ }
+                catch { }
             }
         }
 
@@ -548,9 +572,9 @@ namespace PacmanServer
                             float top = M;
                             float bottom = MAP_H - M - SPRITE;
                             float[,] pt = new float[,] {
-                            { left,  top    }, { right, top    },
-                            { right, bottom }, { left,  bottom }
-                        };
+                                { left,  top    }, { right, top    },
+                                { right, bottom }, { left,  bottom }
+                            };
                             int idx = _patrolIdx.TryGetValue(id, out var v) ? v : 0;
                             float tx = pt[idx, 0], ty = pt[idx, 1];
 

@@ -16,6 +16,7 @@ namespace PacmanGame
         // 상수
         // -----------------------------
         private const int SPRITE = 44;
+        private const int HUD_COIN_SCORE = 10; // 서버의 COIN_SCORE와 일치 (보정용)
 
         // -----------------------------
         // 필드
@@ -34,7 +35,15 @@ namespace PacmanGame
         private Label lblScore;
         private Label lblInfo;
         private int _score = 0;
-        private int _myId = -1;
+        // ★ HUD 보정용(서버 점수 안 들어올 때 대비)
+        private int _initCoinCount = -1;    // 라운드 시작 시 남은 코인 개수
+        private int _prevCoinCount = -1;    // 이전 프레임 남은 코인 개수
+        private int _hudScore = 0;          // 화면 표기 점수(누적)
+        private int _lastServerScore = -1;  // 최근 서버 점수
+        private int _lastRound = -1;        // 마지막으로 표기한 라운드
+        private int _roundBaseScore = 0;    // ★ 라운드 시작 시점의 누적 점수(합산 베이스)
+
+        private int _myId = -1;                 // ★ Welcome에서 확정
         private bool _gameStarted = false;
 
         // 게임오버 오버레이
@@ -89,7 +98,7 @@ namespace PacmanGame
 
             if (_client != null)
             {
-                _client.OnWelcome += Client_OnWelcome;
+                _client.OnWelcome += Client_OnWelcome;      // ★ Welcome 연결
                 _client.OnSnapshot += Client_OnSnapshot;
             }
 
@@ -222,8 +231,8 @@ namespace PacmanGame
             };
             lblPlay.Click += StartOverlay_Click;
             panelStart.Controls.Add(lblPlay);
-            lblPlay.BringToFront();                       // ★ 버튼을 최상단
-            panelStart.Controls.SetChildIndex(lblPlay, 0); // ★ 확실히 맨 위에 고정
+            lblPlay.BringToFront();                       // 버튼을 최상단
+            panelStart.Controls.SetChildIndex(lblPlay, 0); // 확실히 맨 위
 
             // 도움말
             lblHelp = new Label
@@ -306,16 +315,14 @@ namespace PacmanGame
         // -----------------------------
         private void Client_OnWelcome(WelcomeMsg w)
         {
-            if (IsDisposed) return;
-            if (InvokeRequired) BeginInvoke(new Action(() => ApplyWelcome(w)));
-            else ApplyWelcome(w);
-        }
-
-        private void ApplyWelcome(WelcomeMsg w)
-        {
-            _myId = w.YourId;
-            lblInfo.Text = $"ME: {_nickname}  |  Server: {_serverIp}";
-            Text = "PacmanClient - Connected";
+            if (IsDisposed || !IsHandleCreated) return;
+            // ★ 여기서 _myId 확정 + 제목/정보 갱신
+            BeginInvoke(new Action(() =>
+            {
+                _myId = w.YourId; // 확정
+                lblInfo.Text = $"ME: {_myId}  |  Server: {_serverIp}"; // 아이디 표시
+                Text = "PacmanClient - Connected"; // 디버깅용 제목 변경
+            }));
         }
 
         private void Client_OnSnapshot(SnapshotMsg s)
@@ -328,7 +335,61 @@ namespace PacmanGame
 
             Action ui = () =>
             {
-                lblInfo.Text = $"ME: {_nickname}  |  Server: {_serverIp}  |  Players: {count}";
+                // ---------- HUD (점수 + 라운드) ----------
+                // A) 라운드 계산
+                int roundNow = (s.Round != 0) ? s.Round : (s.Tick >> 20);
+
+                // B) 서버 점수 읽기(있으면 채택 후보)
+                int serverScore = -1;
+                if (s.Players != null && _myId > 0)
+                {
+                    foreach (var p in s.Players)
+                        if (p.Id == _myId) { serverScore = p.Score; break; }
+                }
+                if (serverScore >= 0) _lastServerScore = serverScore;
+
+                // C) 현재 남은 코인 수(안 먹힌 것만)
+                int coinsNow = _prevCoinCount;
+                if (s.Coins != null)
+                {
+                    coinsNow = 0;
+                    for (int i = 0; i < s.Coins.Count; i++) if (!s.Coins[i].Eaten) coinsNow++;
+                }
+
+                // D) 라운드 전환 감지 → 베이스/초기 코인 재설정
+                if (_lastRound != roundNow)
+                {
+                    _lastRound = roundNow;
+                    if (coinsNow >= 0)
+                    {
+                        _initCoinCount = coinsNow;   // 새 라운드의 총 코인 수(초기에는 모두 안 먹힘)
+                        _prevCoinCount = coinsNow;
+                    }
+                    _roundBaseScore = _hudScore;     // ★ 이전 누적을 베이스로 저장
+                }
+
+                // E) 코인 기반 보정(이번 라운드 획득분) + 베이스 합산
+                int fallbackTotal = _roundBaseScore;
+                if (_initCoinCount >= 0 && coinsNow >= 0)
+                {
+                    int eaten = _initCoinCount - coinsNow;
+                    if (eaten < 0) eaten = 0;
+                    fallbackTotal = _roundBaseScore + eaten * HUD_COIN_SCORE;
+                }
+
+                // F) 최종 점수: (이전 HUD, 서버 점수, 보정 합산) 중 최댓값
+                int finalScore = _hudScore;
+                if (serverScore >= 0) finalScore = Math.Max(finalScore, serverScore);
+                finalScore = Math.Max(finalScore, fallbackTotal);
+                _hudScore = finalScore;
+                _score = finalScore;
+                _prevCoinCount = coinsNow;
+
+                // G) HUD 출력
+                lblScore.Text = $"SCORE: {_hudScore}  (R:{roundNow})";
+                // ---------- 이하 기존 Info/스프라이트/코인 갱신 ----------
+
+                lblInfo.Text = $"ME: {(_myId > 0 ? _myId.ToString() : _nickname)}  |  Server: {_serverIp}  |  Players: {count}";
 
                 var alive = new HashSet<int>();
 
@@ -364,9 +425,6 @@ namespace PacmanGame
                         alive.Add(ps.Id);
                     }
                 }
-
-                // ★ HUD 점수/라운드: 서버 스냅샷으로 1줄 갱신
-                UpdateScoreAndRoundHUD(s);
 
                 // 스냅샷에 없는 플레이어 제거
                 var toRemove = new List<int>();
@@ -441,30 +499,14 @@ namespace PacmanGame
             };
 
             if (InvokeRequired) BeginInvoke(ui); else ui();
+
+            // ★ 코인/스프라이트 Add 후에도 플레이 버튼이 가려지지 않도록 프레임마다 Z-Order 복구
+            if (InvokeRequired) BeginInvoke(new Action(KeepStartOverlayOnTop));
+            else KeepStartOverlayOnTop();
+
+            // 기존 오버레이 최상단(게임오버) 유지 루틴
             if (InvokeRequired) BeginInvoke((Action)(() => AfterSpritesUpdatedKeepOverlayOnTop()));
             else AfterSpritesUpdatedKeepOverlayOnTop();
-        }
-
-        // -----------------------------
-        // 스냅샷 기반 HUD 갱신(점수 + 라운드)
-        // -----------------------------
-        private void UpdateScoreAndRoundHUD(Shared.SnapshotMsg s)
-        {
-            if (s.Players == null) return;
-
-            // ★ Welcome 미수신 상황 대비: 임시로 내 ID 추정
-            if (_myId < 0 && s.Players.Count > 0)
-                _myId = s.Players[0].Id;
-
-            Shared.PlayerState me = default;
-            bool found = false;
-            foreach (var p in s.Players)
-                if (p.Id == _myId) { me = p; found = true; break; }
-            if (!found) return;
-
-            _score = me.Score;
-            int round = s.Round != 0 ? s.Round : (s.Tick >> 20);
-            lblScore.Text = $"SCORE: {_score}  (R:{round})";
         }
 
         private void ShowGameOver(int round)
@@ -486,6 +528,16 @@ namespace PacmanGame
         {
             if (_isGameOver && panelGameOver.Visible)
                 panelGameOver.BringToFront();
+        }
+
+        // ★ 플레이 오버레이 항상 최상단 유지
+        private void KeepStartOverlayOnTop()
+        {
+            if (panelStart != null && panelStart.Visible)
+            {
+                panelStart.BringToFront();
+                if (lblPlay != null) lblPlay.BringToFront();
+            }
         }
 
         // === 중앙 정렬 전용 레이아웃 ===
