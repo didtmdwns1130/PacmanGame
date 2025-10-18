@@ -7,6 +7,8 @@ using System.Linq;            // (선택)
 using System.Windows.Forms;
 using Shared; // WelcomeMsg, SnapshotMsg, GhostState, CoinState
 using MoveDir = Shared.Dir;   // 로컬 Dir → 네트워크 MoveDir 별칭
+using MySql.Data.MySqlClient;
+
 
 namespace PacmanGame
 {

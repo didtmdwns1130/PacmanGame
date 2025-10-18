@@ -119,6 +119,9 @@ namespace PacmanGame
             {
                 // 먼저 연결 시도(백그라운드)
                 await Task.Run(() => client.Connect(serverIp, GameConsts.DEFAULT_PORT, nickname));
+
+                // ★ 연결 성공 시 닉네임 1회 저장
+                await Db.SaveNicknameOnceAsync(nickname);
             }
             catch (Exception ex)
             {
