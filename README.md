@@ -37,7 +37,7 @@ C# WinForms 기반으로 제작된 팩맨(Pac-Man) 스타일 미니게임입니�
 
 본 프로젝트는 아래 환경에서 개발 및 테스트되었습니다.
 
-- 운영체제: **Windows 10
+- 운영체제: Windows 10
 - 프레임워크: **.NET Framework 8.0**
 - IDE: **Visual Studio 2022**
 - UI: **Windows Forms 기반**
