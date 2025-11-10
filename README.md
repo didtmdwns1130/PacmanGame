@@ -45,7 +45,7 @@ C# WinForms 기반으로 제작된 팩맨(Pac-Man) 스타일 미니게임입니�
 **주의:**  
 Windows 10 환경에서만 테스트되었습니다.  
 Windows 11에서도 동작할 가능성은 있으나, 별도 검증은 진행되지 않았습니다.  
-Linux / macOS에서는 WinForms 기반 프로그램이 정상적으로 실행되지 않습니다.
+Linux / macOS에서는 WinForms 기반 프로그램이 정상적으로 실행되지 않습니다.  
 Windows 환경에서 실행하는 것을 권장합니다.
 
 ---
